@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LGAI Coordinator — 节点网络仪表盘</title>
+<style>
+:root{
+  --bg:#020617;--card:rgba(15,23,42,.55);--line:rgba(148,163,184,.13);
+  --text:#f1f5f9;--muted:#94a3b8;--dim:#64748b;
+  --blue:#3b82f6;--violet:#8b5cf6;--pink:#ec4899;--green:#10b981;--amber:#f59e0b;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:"Inter","SF Pro Display","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  background-image:linear-gradient(to right,rgba(255,255,255,.035) 1px,transparent 1px),
+                   linear-gradient(to bottom,rgba(255,255,255,.035) 1px,transparent 1px);
+  background-size:40px 40px;min-height:100vh;padding-bottom:60px;
+}
+.mono{font-family:"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
+header{
+  border-bottom:1px solid var(--line);background:rgba(2,6,23,.8);backdrop-filter:blur(12px);
+  position:sticky;top:0;z-index:10;
+}
+.head-in{max-width:1240px;margin:0 auto;padding:0 24px;height:66px;display:flex;align-items:center;gap:14px}
+.mark{width:38px;height:38px;border-radius:11px;background:linear-gradient(45deg,#2563eb,#8b5cf6);
+  display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;color:#fff}
+h1{font-size:18px;font-weight:800}
+h1 span{color:var(--amber)}
+.net{margin-left:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px;font-weight:600}
+.net .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 9px var(--green);animation:pu 1.6s infinite}
+@keyframes pu{50%{opacity:.35}}
+.wrap{max-width:1240px;margin:0 auto;padding:26px 24px 0}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:14px}
+.stat{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:18px 20px}
+.stat .k{font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:700}
+.stat .v{font-size:27px;font-weight:900;margin-top:6px}
+.v-blue{color:#60a5fa}.v-violet{color:#a78bfa}.v-green{color:#34d399}.v-amber{color:#fbbf24}.v-pink{color:#f472b6}
+.cols{display:grid;grid-template-columns:7fr 5fr;gap:14px;margin-top:14px}
+@media(max-width:1000px){.cols{grid-template-columns:1fr}}
+.panel{border:1px solid var(--line);background:var(--card);border-radius:16px;overflow:hidden}
+.panel h2{font-size:13px;letter-spacing:.08em;color:var(--muted);font-weight:800;padding:15px 20px;border-bottom:1px solid var(--line)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{padding:10px 14px;text-align:left;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--line)}
+td{padding:11px 14px;border-bottom:1px solid rgba(148,163,184,.06);color:var(--muted)}
+td:first-child{color:var(--text);font-weight:700}
+.pill{font-size:10.5px;font-weight:800;padding:2px 9px;border-radius:999px;letter-spacing:.05em}
+.p-on{background:rgba(16,185,129,.13);color:#34d399}
+.p-off{background:rgba(148,163,184,.1);color:var(--dim)}
+.p-win{background:rgba(16,185,129,.13);color:#34d399}
+.p-loss{background:rgba(239,68,68,.13);color:#f87171}
+.p-open{background:rgba(245,158,11,.12);color:#fbbf24}
+.p-md{color:#60a5fa}.p-ai{color:#a78bfa}.p-sv{color:#f472b6}
+.feed{max-height:420px;overflow-y:auto}
+.feed-row{display:flex;justify-content:space-between;gap:10px;padding:10px 20px;border-bottom:1px solid rgba(148,163,184,.06);font-size:12.5px}
+.feed-row .pts{font-weight:800;color:#34d399;white-space:nowrap}
+.feed-row .pts.zero{color:#f87171}
+.feed-row .who{color:var(--text);font-weight:700}
+.feed-row .t{color:var(--dim);font-size:11px;white-space:nowrap}
+.empty{padding:26px 20px;color:var(--dim);font-size:13px;text-align:center}
+footer{max-width:1240px;margin:22px auto 0;padding:0 24px;font-size:11.5px;color:var(--dim)}
+</style>
+</head>
+<body>
+<header>
+  <div class="head-in">
+    <div class="mark">LG</div>
+    <h1>猎狗<span>AI</span> Coordinator <span style="color:var(--dim);font-weight:600;font-size:12px">节点网络仪表盘</span></h1>
+    <div class="net mono"><span class="dot"></span><span id="net">LGAI Testnet</span></div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="cards">
+    <div class="stat"><div class="k">在线节点</div><div class="v v-green" id="online">—</div></div>
+    <div class="stat"><div class="k">累计节点</div><div class="v v-blue" id="total">—</div></div>
+    <div class="stat"><div class="k">已完成任务</div><div class="v v-violet" id="tasks">—</div></div>
+    <div class="stat"><div class="k">已发积分</div><div class="v v-amber" id="points">—</div></div>
+    <div class="stat"><div class="k">预测胜率</div><div class="v v-pink" id="acc">—</div></div>
+    <div class="stat"><div class="k">永久存证</div><div class="v v-green" id="chain">—</div></div>
+    <div class="stat"><div class="k">市场成交</div><div class="v v-amber" id="vol">—</div></div>
+  </div>
+
+  <div class="cols">
+    <div>
+      <div class="panel">
+        <h2>节点列表 · NODES</h2>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>名称</th><th>平台</th><th>状态</th><th>等级</th><th>负载</th><th>积分</th><th>任务</th><th>违规</th><th>最后心跳</th></tr></thead>
+          <tbody id="nodes"><tr><td colspan="9" class="empty">等待节点接入…</td></tr></tbody>
+        </table>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <h2>AI 推理信号 · 推土机 / 吸筹 / 出货</h2>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>交易对</th><th>综合评分</th><th>形态</th><th>🚜推土机</th><th>🧲吸筹</th><th>📉出货</th><th>RSI</th><th>节点</th><th>时间</th></tr></thead>
+          <tbody id="sigs"><tr><td colspan="9" class="empty">暂无推理信号</td></tr></tbody>
+        </table>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <h2>网络预测 · PREDICTIONS</h2>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>交易对</th><th>方向</th><th>依据</th><th>入场价</th><th>出场价</th><th>状态</th><th>时间</th></tr></thead>
+          <tbody id="preds"><tr><td colspan="7" class="empty">暂无预测</td></tr></tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="panel">
+        <h2>去中心化预言机 · ORACLE FEEDS</h2>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>交易对</th><th>共识价</th><th>偏差</th><th>节点数</th><th>存证</th></tr></thead>
+          <tbody id="oracle"><tr><td colspan="5" class="empty">暂无喂价</td></tr></tbody>
+        </table>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <h2>永久存证 · PERMANENT ARCHIVE (哈希链)</h2>
+        <div class="feed" id="archive" style="max-height:180px"><div class="empty">暂无存证</div></div>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <h2>AI 数据市场 · DATA MARKETPLACE</h2>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>商品</th><th>类型</th><th>规模</th><th>价格</th></tr></thead>
+          <tbody id="listings"><tr><td colspan="4" class="empty">暂无商品</td></tr></tbody>
+        </table>
+        </div>
+        <div class="feed" id="sales" style="max-height:130px"></div>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <h2>贡献账本 · CONTRIBUTION LEDGER</h2>
+        <div class="feed" id="ledger" style="max-height:260px"><div class="empty">暂无记录</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<footer class="mono">LGAI Coordinator · Proof of Intelligence Testnet · 数据每 3 秒自动刷新</footer>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+const ago=t=>{const s=(Date.now()-t)/1000;return s<60?Math.round(s)+'s前':s<3600?Math.round(s/60)+'m前':Math.round(s/3600)+'h前'};
+const TL={market_data:['数据采集','p-md'],ai_infer:['AI 推理','p-ai'],signal_verify:['信号验证','p-sv'],market:['数据市场','p-md']};
+const KIND={oracle_price:'预言机喂价',ai_signal:'AI 信号',prediction:'预测裁定',market_sale:'市场成交'};
+const TIERC={'金':'#fbbf24','银':'#cbd5e1','铜':'#b4886b'};
+async function refresh(){
+  try{
+    const d=await (await fetch('/api/stats')).json();
+    $('net').textContent=d.network+' v'+d.version;
+    $('online').textContent=d.onlineNodes;
+    $('total').textContent=d.totalNodes;
+    $('tasks').textContent=d.tasksCompleted.toLocaleString();
+    $('points').textContent=d.pointsIssued.toLocaleString();
+    $('acc').textContent=d.accuracy.rate==null?'—':d.accuracy.rate+'%';
+    $('chain').textContent=d.chain?d.chain.seq.toLocaleString():'—';
+    $('vol').textContent=d.market?d.market.volume.toLocaleString():'—';
+    $('nodes').innerHTML=d.nodes.length?d.nodes.map(n=>`<tr>
+      <td>${esc(n.name)} <span class="mono" style="color:var(--dim);font-size:10px">${n.id}</span></td>
+      <td>${esc(n.platform)}/${esc(n.arch)}</td>
+      <td><span class="pill ${n.online?'p-on':'p-off'}">${n.online?'在线':'离线'}</span></td>
+      <td style="color:${TIERC[n.tier]||'var(--dim)'};font-weight:800">${n.tier||'铜'}</td>
+      <td>${n.metrics&&n.metrics.load!=null?n.metrics.load+' / '+n.metrics.memPct+'%':'—'}</td>
+      <td style="color:#fbbf24;font-weight:800">${n.points}</td>
+      <td>${n.tasksDone}</td><td>${n.strikes||0}</td>
+      <td>${ago(n.lastSeen)}</td></tr>`).join('')
+      :'<tr><td colspan="9" class="empty">等待节点接入…</td></tr>';
+    $('oracle').innerHTML=(d.oracle&&d.oracle.length)?d.oracle.map(f=>`<tr>
+      <td>${esc(f.symbol)}</td>
+      <td class="mono" style="color:#60a5fa;font-weight:800">${f.price}</td>
+      <td class="mono">${f.deviationPct}%</td>
+      <td>${f.contributors}</td>
+      <td class="mono" style="color:var(--dim);font-size:10.5px">${esc((f.proof||'').slice(0,18))}…</td></tr>`).join('')
+      :'<tr><td colspan="5" class="empty">暂无喂价</td></tr>';
+    $('archive').innerHTML=(d.archive&&d.archive.length)?d.archive.map(r=>`<div class="feed-row">
+      <span><span class="mono" style="color:var(--dim)">#${r.seq}</span> <span class="who">${KIND[r.kind]||r.kind}</span> ${esc(r.data&&r.data.symbol||'')}</span>
+      <span class="mono" style="color:#34d399;font-size:10.5px">${esc(r.txid.slice(0,16))}…</span>
+      <span class="t mono">${ago(r.ts)}</span></div>`).join('')
+      :'<div class="empty">暂无存证</div>';
+    $('listings').innerHTML=(d.market&&d.market.listings.length)?d.market.listings.map(l=>`<tr>
+      <td>${esc(l.title)}</td>
+      <td>${l.kind==='dataset'?'数据集':'信号流'}</td>
+      <td>${l.size}</td>
+      <td style="color:#fbbf24;font-weight:800">${l.price} 分</td></tr>`).join('')
+      :'<tr><td colspan="4" class="empty">暂无商品</td></tr>';
+    $('sales').innerHTML=(d.market&&d.market.sales.length)?d.market.sales.map(s=>`<div class="feed-row">
+      <span><span class="who">${esc(s.name)}</span> 购入 ${esc(s.title)}</span>
+      <span class="pts">-${s.price}</span>
+      <span class="t mono">${ago(s.ts)}</span></div>`).join(''):'';
+    $('sigs').innerHTML=(d.signals&&d.signals.length)?d.signals.map(s=>{
+      const f=s.features||{};
+      const col=s.score>0.15?'#34d399':s.score<-0.15?'#f87171':'var(--dim)';
+      return `<tr>
+      <td>${esc(s.symbol)}</td>
+      <td class="mono" style="color:${col};font-weight:800">${s.score>0?'+':''}${s.score}</td>
+      <td><span class="pill ${/多头|吸筹/.test(s.regime||'')?'p-win':/出货|派发/.test(s.regime||'')?'p-loss':'p-open'}">${esc(s.regime||'—')}</span></td>
+      <td class="mono">${f.bulldozer!=null?f.bulldozer:'—'}</td>
+      <td class="mono">${f.accum!=null?f.accum:'—'}</td>
+      <td class="mono">${f.distrib!=null?f.distrib:'—'}</td>
+      <td class="mono">${f.rsi!=null?f.rsi:'—'}</td>
+      <td>${esc(s.name||String(s.nodeId||'').slice(0,8))}</td>
+      <td>${ago(s.ts)}</td></tr>`;
+    }).join(''):'<tr><td colspan="9" class="empty">暂无推理信号</td></tr>';
+    $('preds').innerHTML=d.predictions.length?d.predictions.map(p=>`<tr>
+      <td>${esc(p.symbol)}</td>
+      <td style="color:${p.dir==='LONG'?'#34d399':'#f87171'};font-weight:800">${p.dir}</td>
+      <td style="font-size:11.5px">${esc(p.basis||'—')}</td>
+      <td class="mono">${p.price0}</td>
+      <td class="mono">${p.price1!=null?p.price1:'—'}</td>
+      <td><span class="pill ${p.status==='win'?'p-win':p.status==='loss'?'p-loss':'p-open'}">${{win:'WIN ✓',loss:'LOSS ✗',open:'进行中',verifying:'验证中'}[p.status]||p.status}</span></td>
+      <td>${ago(p.createdAt)}</td></tr>`).join('')
+      :'<tr><td colspan="7" class="empty">暂无预测</td></tr>';
+    $('ledger').innerHTML=d.ledger.length?d.ledger.map(l=>{
+      const [label,cls]=TL[l.type]||[l.type,''];
+      return `<div class="feed-row">
+        <span><span class="who">${esc(l.name)}</span> <span class="${cls}">${label}</span> ${esc(l.symbol||'')} <span style="color:var(--dim)">${esc(l.note||'')}</span></span>
+        <span class="pts ${l.points?'':'zero'}">${l.points?'+'+l.points:'0'}</span>
+        <span class="t mono">${ago(l.ts)}</span></div>`;
+    }).join(''):'<div class="empty">暂无记录</div>';
+  }catch(e){ $('net').textContent='连接中断…'; }
+}
+refresh();setInterval(refresh,3000);
+</script>
+</body>
+</html>

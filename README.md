@@ -1,0 +1,85 @@
+# LGAI Node — 跨平台节点程序（Phase 02: AI Agent Network）
+
+猎狗AI (LGAI) 可信智能网络的节点客户端 + 轻量协调端。
+**零依赖**，任何装有 Node.js ≥ 18 的设备（树莓派 / Mac mini / PC / 服务器 / 云主机）直接运行，无需 `npm install`。
+
+## 快速开始
+
+```bash
+# 1. 启动协调端（部署在你的服务器上，默认端口 8402）
+node coordinator/server.js
+# 仪表盘: http://localhost:8402
+
+# 2. 任意设备启动节点
+node client/lgai-node.js --coordinator http://<服务器>:8402 --name my-pi
+
+# 离线测试（模拟行情数据源）
+node client/lgai-node.js --mock
+
+# 自检（协调端 + mock 节点全闭环）
+npm run smoke
+```
+
+## 节点职能（对应官网四大角色）
+
+| 任务类型 | 角色 | 内容 | 积分 |
+|---|---|---|---|
+| `market_data` | 数据计算 | 拉取公开 OHLCV（Binance→OKX 自动降级），多节点交叉共识（偏离中位数 >0.5% 记违规） | 5 |
+| `ai_infer` | AI 推理 | **三大基础模型**（价量代理，口径对齐 README_signals）：🚜推土机趋势（近窗单边占比≥70% 定方向 + 结构锚）、🧲庄家吸筹（低位放量+收盘贴上沿+低点抬高）、📉庄家出货（高位下跌K放量+收盘贴下沿+高点下移），扩展动量/RSI/波动率 → 综合评分 [-1,1] + 形态标签 | 8 |
+| `signal_verify` | 信号验证 | 独立复核网络预测到期后的实际结果，多数一致才计分 | 10 |
+| — | 智能贡献 | 所有有效贡献记入账本（Contribution Proof 雏形） | — |
+
+## 闭环流程
+
+```
+节点采集行情 → 协调端共识定价 → 生成网络预测(动量方向, 15min 时限)
+     → 到期派发验证任务 → 多节点投票裁定 WIN/LOSS → 胜率统计 + 积分发放
+```
+
+## 协调端配置（环境变量）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `PORT` | 8402 | 监听端口 |
+| `SYMBOLS` | BTCUSDT,ETHUSDT,SOLUSDT | 任务币种 |
+| `TICK_MS` | 45000 | 任务生成周期 |
+| `HORIZON_MIN` | 15 | 预测验证时限（分钟） |
+| `DATA_DIR` | coordinator/data | 状态持久化目录（已 gitignore） |
+
+## 五大协议维度（与官网协议栈对应）
+
+| 维度 | 实现 |
+|---|---|
+| 🗄 去中心化存储 | 喂价/信号/预测裁定/市场成交全部写入 **SHA-256 哈希链存证**（`prevHash` 链式防篡改，mock `ar://` txid），Arweave 上链适配预留 |
+| 🔮 去中心化预言机 | 多节点独立采集 → 中位数共识 → 偏离 >0.5% 记违规；`GET /api/oracle/price?symbol=X` 对外喂价（含贡献节点数/最大偏差/存证证明） |
+| 🤝 AI Agent 网络 | `ai_infer` 冗余派发至多节点 → **集成推理**（评分取中位数、形态取多数）；`GET /api/agent/intel?symbol=X` 供外部智能体一键拉取全维度情报 |
+| 🛒 AI 数据市场 | 共识行情数据集 / AI 信号流上架流通，积分结算，成交上链存证；`--market` 看货、`--buy <id>` 购买 |
+| 💎 智能贡献激励 | 声誉分级：铜 ×1.0 / 银 ×1.2（≥100 分且违规率<15%）/ 金 ×1.5（≥300 分且违规率<5%），以贡献质量而非算力定酬 |
+
+## 协议（HTTP JSON）
+
+节点接口（鉴权 `x-node-id` + `x-node-token`）：
+- `POST /api/register` → `{nodeId, token}`（凭据保存在 `~/.lgai/`）
+- `POST /api/heartbeat` — 30s 心跳，带负载/内存指标
+- `GET  /api/tasks` — 领取任务（租约 5min，超时重新派发）
+- `POST /api/result` — 提交结果，凑齐冗余份数后共识裁定
+- `POST /api/market/buy` — 数据市场购买（积分结算）
+
+公开接口（预言机/存证/Agent 协作/市场）：
+- `GET /api/oracle` · `GET /api/oracle/price?symbol=X` — 共识喂价
+- `GET /api/archive` — 哈希链存证（链高 + 最近 50 条）
+- `GET /api/agent/intel?symbol=X` — 喂价 + 最新集成信号 + 预测 + 网络胜率
+- `GET /api/market/listings` — 市场商品与成交
+- `GET /api/stats` — 仪表盘数据（无敏感字段）
+
+## 与 crypto_quant 主仓库的关系
+
+独立组件，不 import 主仓库代码、不触碰 webhook_receiver / 实盘执行路径。
+后续可将 `data/lgai.db` 的预测信号接入协调端替代自产动量预测（Phase 03）。
+
+## Roadmap 内待办（MVP 之外）
+
+- 单二进制打包（`node --experimental-sea` 或 pkg），systemd/launchd 安装脚本
+- 结果签名（节点私钥）→ 贡献证明上链（Arweave）
+- 任务级 stake/slash，替代简单 strike 计数
+- 协调端多实例 + sqlite 持久化（当前 JSON 文件适用于 ≤几百节点）

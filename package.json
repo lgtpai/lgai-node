@@ -1,0 +1,13 @@
+{
+  "name": "lgai-node",
+  "version": "0.1.0",
+  "description": "LGAI Node — cross-platform node client + coordinator for the LGAI Trusted Intelligence Network (Phase 02)",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "coordinator": "node coordinator/server.js",
+    "node": "node client/lgai-node.js",
+    "smoke": "node tests/smoke.mjs"
+  },
+  "license": "UNLICENSED"
+}
