@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * LGAI Coordinator — 轻量协调服务器 (Phase 02)
- * 职责：节点注册/心跳、任务生成与分发（数据采集/AI推理/信号验证）、
- *       共识校验、贡献积分账本、网页仪表盘。
- * 零依赖，Node >= 18。
+ * LGAI Coordinator — lightweight coordination server (Phase 02)
+ * Responsibilities: node registration/heartbeats, task generation & dispatch
+ * (data collection / AI inference / signal verification), consensus checks,
+ * contribution point ledger, and the web dashboard.
+ * Zero dependencies, Node >= 18.
  *
  *   PORT=18402 SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT node coordinator/server.js
  */
@@ -17,11 +18,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VERSION = '0.1.1';
 const PORT = +(process.env.PORT || 18402);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const TICK_MS = +(process.env.TICK_MS || 45_000);       // 任务生成周期
-const HORIZON_MIN = +(process.env.HORIZON_MIN || 15);   // 预测验证时限(分钟)
+const TICK_MS = +(process.env.TICK_MS || 45_000);       // task generation interval
+const HORIZON_MIN = +(process.env.HORIZON_MIN || 15);   // prediction verification horizon (minutes)
 const SYMBOLS = (process.env.SYMBOLS || 'BTCUSDT,ETHUSDT,SOLUSDT').split(',').map(s => s.trim());
-const ONLINE_MS = 90_000;       // 心跳超时即离线
-const LEASE_MS = 5 * 60_000;    // 任务租约
+const ONLINE_MS = 90_000;       // offline after missed heartbeats
+const LEASE_MS = 5 * 60_000;    // task lease
 const POINTS = { market_data: 5, ai_infer: 8, signal_verify: 10 };
 
 // ---------------- state ----------------
@@ -29,14 +30,14 @@ const STATE_FILE = path.join(DATA_DIR, 'state.json');
 let S = {
   nodes: {},        // id -> node
   tasks: {},        // id -> task
-  predictions: [],  // 网络自产预测（用于信号验证闭环）
-  signals: [],      // 节点推理产出（集成共识后）
-  ledger: [],       // 贡献账本
+  predictions: [],  // network-generated predictions (for the verification loop)
+  signals: [],      // node inference output (after ensemble consensus)
+  ledger: [],       // contribution ledger
   marketHistory: {},// symbol -> [{ts, c,h,l,v}]
-  archive: [],      // 永久存证（哈希链，Arweave 适配预留）
+  archive: [],      // permanent archive (hash chain, Arweave adapter reserved)
   chain: { seq: 0, head: '' },
-  oracle: {},       // symbol -> 最新共识喂价（去中心化预言机）
-  market: { sales: [] }, // AI 数据市场成交记录
+  oracle: {},       // symbol -> latest consensus feed (decentralized oracle)
+  market: { sales: [] }, // AI data marketplace sales
   stats: { tasksCompleted: 0, pointsIssued: 0, wins: 0, losses: 0, marketVolume: 0 },
 };
 function load() {
@@ -73,7 +74,7 @@ function createTask(type, symbol, payload, redundancy) {
   return t;
 }
 
-// ---- 智能贡献激励：声誉分级，以贡献质量而非算力定酬 ----
+// ---- Contribution incentives: reputation tiers, rewards by quality not hashpower ----
 function tierOf(n) {
   const strikeRate = n.tasksDone ? n.strikes / n.tasksDone : 0;
   if (n.points >= 300 && strikeRate < 0.05) return 'gold';
@@ -91,7 +92,7 @@ function award(nodeId, task, basePts, note) {
   S.ledger = S.ledger.slice(0, 400);
 }
 
-// ---- 去中心化存储：哈希链存证（Arweave 上链适配预留 ARWEAVE_GATEWAY）----
+// ---- Decentralized storage: hash-chained archive (Arweave adapter reserved via ARWEAVE_GATEWAY) ----
 function archivePut(kind, data) {
   const prev = S.chain.head || '';
   const hash = crypto.createHash('sha256').update(prev + JSON.stringify({ kind, data })).digest('hex');
@@ -113,7 +114,7 @@ function maybeCreatePrediction(symbol) {
   const hist = S.marketHistory[symbol] || [];
   if (open || hist.length < 12 || Math.random() > 0.5) return;
   const last = hist[hist.length - 1].close;
-  // 优先采用节点 AI 推理信号（推土机/吸筹/出货综合评分），无近期信号则退回 SMA 动量
+  // Prefer node AI inference signals (bulldozer/accumulation/distribution composite); fall back to SMA momentum
   const sig = S.signals.find(s => s.symbol === symbol && now() - s.ts < 10 * 60_000);
   let dir, basis;
   if (sig && Math.abs(sig.score) >= 0.15) {
@@ -150,12 +151,12 @@ function finalize(t) {
     const hist = (S.marketHistory[t.symbol] ||= []);
     hist.push({ ts: now(), c: mid, h: medOf('high'), l: medOf('low'), v: medOf('vol') || 0, close: mid });
     if (hist.length > 300) hist.splice(0, hist.length - 300);
-    // 去中心化预言机：多节点共识喂价 + 永久存证（标注数据源，mock 数据一目了然）
+    // Decentralized oracle: multi-node consensus feed + permanent proof (source labeled, mock data obvious)
     const sources = [...new Set(entries.map(([, r]) => r.source).filter(Boolean))].join('+') || '?';
     const rec = archivePut('oracle_price', { symbol: t.symbol, price: mid, nodes: entries.length, maxDevPct: +(maxDev * 100).toFixed(3), source: sources });
     S.oracle[t.symbol] = { symbol: t.symbol, price: mid, ts: now(), contributors: entries.length, deviationPct: +(maxDev * 100).toFixed(3), proof: rec.txid, source: sources };
     maybeCreatePrediction(t.symbol);
-    // AI Agent 协作：多节点集成推理（推土机/吸筹/出货三大模型）
+    // Agent collaboration: multi-node ensemble inference (bulldozer/accumulation/distribution models)
     if (hist.length >= 12 && Math.random() < 0.6) {
       createTask('ai_infer', t.symbol, { candles: hist.slice(-30).map(h => ({ c: h.c ?? h.close, h: h.h ?? h.close, l: h.l ?? h.close, v: h.v || 0 })) }, Math.min(3, onlineNodes().length || 1));
     }
@@ -168,7 +169,7 @@ function finalize(t) {
       } else strike(nid, t, 'invalid inference result');
     }
     if (valid.length) {
-      // 集成共识：多智能体评分取中位数，形态取多数
+      // Ensemble consensus: median of scores, majority regime
       const score = +median(valid.map(v => v.score)).toFixed(4);
       const counts = {};
       for (const v of valid) counts[v.regime] = (counts[v.regime] || 0) + 1;
@@ -197,7 +198,7 @@ function finalize(t) {
       p.resolvedAt = now();
       p.price1 = median(entries.map(([, r]) => +r.price1).filter(Number.isFinite));
       S.stats[majority === 'WIN' ? 'wins' : 'losses'] += 1;
-      // 预测全生命周期永久存证：入场→验证→裁定
+      // Full prediction lifecycle archived: entry -> verification -> verdict
       const rec = archivePut('prediction', { symbol: p.symbol, dir: p.dir, basis: p.basis, price0: p.price0, price1: p.price1, result: majority, verifiers: entries.length });
       p.proof = rec.txid;
     }
@@ -223,7 +224,7 @@ function tick() {
       }
     }
   }
-  // 租约到期处理
+  // handle expired leases
   for (const t of Object.values(S.tasks)) {
     if (t.status === 'done' || t.status === 'expired') continue;
     if (now() - t.createdAt > LEASE_MS) {
@@ -237,7 +238,7 @@ function tick() {
       }
     }
   }
-  // 清理旧任务
+  // prune old tasks
   const done = Object.values(S.tasks).filter(t => t.status === 'done' || t.status === 'expired')
     .sort((a, b) => b.createdAt - a.createdAt);
   for (const t of done.slice(300)) delete S.tasks[t.id];
@@ -264,7 +265,7 @@ function auth(req) {
 
 const DASHBOARD = fs.readFileSync(path.join(__dirname, 'dashboard.html'), 'utf8');
 
-// ---- AI 数据市场：数据集与模型信号流通，积分结算 ----
+// ---- AI data marketplace: datasets & signal feeds, point-settled ----
 function listings() {
   const ls = [];
   for (const sym of SYMBOLS) {
@@ -281,7 +282,15 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       return res.end(DASHBOARD);
     }
-    // ---- 去中心化预言机（公开读）：可信共识喂价 ----
+    // Brand logo (same asset as the official website)
+    if (req.method === 'GET' && url.pathname === '/logo.jpg') {
+      try {
+        const img = fs.readFileSync(path.join(__dirname, 'lgai_logo.jpg'));
+        res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=86400' });
+        return res.end(img);
+      } catch { return send(res, 404, { error: 'logo not found' }); }
+    }
+    // ---- Decentralized oracle (public read): trusted consensus feeds ----
     if (req.method === 'GET' && url.pathname === '/api/oracle') {
       return send(res, 200, { feeds: Object.values(S.oracle) });
     }
@@ -289,11 +298,11 @@ const server = http.createServer(async (req, res) => {
       const f = S.oracle[url.searchParams.get('symbol')];
       return f ? send(res, 200, f) : send(res, 404, { error: 'no feed' });
     }
-    // ---- 永久存证（公开读）：哈希链可验证 ----
+    // ---- Permanent archive (public read): verifiable hash chain ----
     if (req.method === 'GET' && url.pathname === '/api/archive') {
       return send(res, 200, { chain: S.chain, records: S.archive.slice(0, 50) });
     }
-    // ---- AI Agent 协作接口（公开读）：外部智能体一次拉取全维度情报 ----
+    // ---- Agent collaboration API (public read): full intel for external agents in one call ----
     if (req.method === 'GET' && url.pathname === '/api/agent/intel') {
       const sym = url.searchParams.get('symbol');
       if (!sym) return send(res, 400, { error: 'symbol required' });
@@ -305,7 +314,7 @@ const server = http.createServer(async (req, res) => {
         accuracy: S.stats.wins + S.stats.losses ? +(S.stats.wins / (S.stats.wins + S.stats.losses) * 100).toFixed(1) : null,
       });
     }
-    // ---- AI 数据市场（公开读列表）----
+    // ---- AI data marketplace (public listings) ----
     if (req.method === 'GET' && url.pathname === '/api/market/listings') {
       return send(res, 200, { listings: listings(), volume: S.stats.marketVolume, sales: S.market.sales.slice(0, 20) });
     }
@@ -357,7 +366,7 @@ const server = http.createServer(async (req, res) => {
         load: +(+b.load || 0).toFixed(2), memPct: +(+b.memPct || 0).toFixed(1),
         uptimeS: Math.round(+b.uptimeS || 0),
       };
-      tick(); // 有活跃节点即保证任务池充盈
+      tick(); // keep the task pool filled while nodes are active
       save();
       return send(res, 200, { ok: true });
     }
@@ -374,7 +383,7 @@ const server = http.createServer(async (req, res) => {
       if (mine.length) save();
       return send(res, 200, { tasks: mine });
     }
-    // ---- AI 数据市场：购买（积分结算 + 成交存证）----
+    // ---- Marketplace purchase (point settlement + sale proof) ----
     if (req.method === 'POST' && url.pathname === '/api/market/buy') {
       const b = await readBody(req);
       const item = listings().find(l => l.id === b.listingId);
@@ -413,7 +422,14 @@ const server = http.createServer(async (req, res) => {
 load();
 setInterval(tick, TICK_MS);
 server.listen(PORT, () => {
-  log(`LGAI Coordinator v${VERSION}`);
-  log(`dashboard  http://localhost:${PORT}`);
+  const tty = process.stdout.isTTY;
+  const amber = s => tty ? `\x1b[1;33m${s}\x1b[0m` : s;
+  console.log(amber(`
+   ██╗      ██████╗  █████╗ ██╗    LGAI Coordinator v${VERSION}
+   ██║     ██╔════╝ ██╔══██╗██║    The Trusted Intelligence Network for AI Agents
+   ██║     ██║  ███╗███████║██║
+   ███████╗╚██████╔╝██╔══██║██║    dashboard: http://localhost:${PORT}
+   ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝
+`));
   log(`symbols    ${SYMBOLS.join(', ')}  |  tick ${TICK_MS / 1000}s  |  horizon ${HORIZON_MIN}min`);
 });

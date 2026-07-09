@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 打包跨平台安装包 → dist/
+# Build cross-platform install packages -> dist/
 #   packaging/build.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,12 +14,12 @@ rm -rf "$STAGE/coordinator/data"
 cp "$ROOT/package.json" "$ROOT/README.md" "$ROOT/README.zh-CN.md" "$STAGE/"
 mkdir -p "$STAGE/packaging"
 
-# unix 包
+# unix package
 cp "$ROOT/packaging/install.sh" "$ROOT/packaging/uninstall.sh" "$STAGE/"
 chmod +x "$STAGE/install.sh" "$STAGE/uninstall.sh"
 tar -czf "$OUT/lgai-node-$V-macos-linux.tar.gz" -C "$OUT/stage" "lgai-node-$V"
 
-# windows 包
+# windows package
 rm -f "$STAGE/install.sh" "$STAGE/uninstall.sh"
 cp "$ROOT/packaging/install.ps1" "$ROOT/packaging/uninstall.ps1" "$STAGE/"
 (cd "$OUT/stage" && zip -qr "$OUT/lgai-node-$V-windows.zip" "lgai-node-$V")

@@ -24,8 +24,12 @@ header{
   position:sticky;top:0;z-index:10;
 }
 .head-in{max-width:1240px;margin:0 auto;padding:0 24px;height:66px;display:flex;align-items:center;gap:14px}
-.mark{width:38px;height:38px;border-radius:11px;background:linear-gradient(45deg,#2563eb,#8b5cf6);
-  display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;color:#fff}
+.mark{
+  width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0;
+  border:1px solid rgba(245,158,11,.4);box-shadow:0 4px 14px rgba(245,158,11,.25);
+}
+.mark-fb{width:40px;height:40px;border-radius:11px;background:linear-gradient(45deg,#2563eb,#8b5cf6);
+  display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;color:#fff;flex-shrink:0}
 h1{font-size:18px;font-weight:800}
 h1 span{color:var(--amber)}
 h1 .sub{color:var(--dim);font-weight:600;font-size:12px}
@@ -72,7 +76,7 @@ footer{max-width:1240px;margin:22px auto 0;padding:0 24px;font-size:11.5px;color
 <body>
 <header>
   <div class="head-in">
-    <div class="mark">LG</div>
+    <img class="mark" src="/logo.jpg" alt="LGAI" onerror="this.outerHTML='&lt;div class=&quot;mark-fb&quot;&gt;LG&lt;/div&gt;'">
     <h1><span id="hBrand">LG<span>AI</span></span> Coordinator <span class="sub" id="hSub">Node Network Dashboard</span></h1>
     <div class="net mono"><span class="dot"></span><span id="net">LGAI Testnet</span></div>
     <button class="lang-btn" id="langBtn" onclick="toggleLang()">中文</button>

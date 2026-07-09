@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * LGAI Node — 跨平台节点客户端 (Phase 02)
- * 树莓派 / Mac / PC / 服务器 / 云主机，只需 Node >= 18，零依赖。
+ * LGAI Node — cross-platform node client (Phase 02)
+ * Raspberry Pi / Mac / PC / server / cloud. Requires Node >= 18, zero dependencies.
  *
  *   node client/lgai-node.js --coordinator http://<host>:18402 [--name myPi] [--mock] [--once]
  *
- * 职能（对应官网四大节点角色）：
- *   数据计算  market_data   拉取公开行情并上报，参与多节点共识
- *   AI 推理   ai_infer      基于共识行情本地计算动量/波动特征与评分
- *   信号验证  signal_verify 独立复核网络预测的实际结果
- *   智能贡献  贡献积分账本，协调端记账
+ * Roles (matching the four node roles on the website):
+ *   Data Compute   market_data    fetch public market data, join multi-node consensus
+ *   AI Inference   ai_infer       run local models on consensus OHLCV, produce a score
+ *   Verification   signal_verify  independently verify matured network predictions
+ *   Contribution   every valid contribution is recorded in the coordinator ledger
  */
 import os from 'node:os';
 import fs from 'node:fs';
@@ -84,7 +84,7 @@ async function fetchJson(url, timeout = 8000) {
     return await res.json();
   } finally { clearTimeout(t); }
 }
-// 确定性 OHLCV 随机游走（mock），同一 15s 窗口内全网一致 → 可通过共识校验
+// Deterministic OHLCV random walk (mock): identical network-wide within a 15s window, so it passes consensus
 function mockCandles(symbol, n) {
   const bucket = Math.floor(Date.now() / 15_000);
   const hash = s => parseInt(crypto.createHash('sha1').update(s).digest('hex').slice(0, 8), 16);
@@ -120,11 +120,12 @@ async function getPrice(symbol) {
 }
 
 // ---------------- local inference ----------------
-// 三大基础模型（价量代理实现，口径对齐主仓库 README_signals）：
-//   🚜 推土机趋势  近窗单边推进占比 ≥70% 定方向 + 结构锚（回调不破近窗低点继续持多，反之持空）
-//   📉 庄家出货    高位滞涨 + 下跌K放量 + 收盘贴近K线下沿 + 高点逐级下移
-//   🧲 庄家吸筹    低位横盘 + 量能抬升 + 收盘贴近K线上沿 + 低点逐级抬高
-// 扩展特征：动量 / RSI / 波动率 → 综合趋势评分 ∈ [-1,1]
+// Three base models (price-volume proxy implementation):
+//   🚜 Bulldozer Trend      >=70% one-directional closes in the window set the direction,
+//                           plus a structural anchor (trend invalidated if the anchor breaks)
+//   📉 Whale Distribution   stalling highs + heavy volume on down candles + closes near lows + lower highs
+//   🧲 Whale Accumulation   low-zone consolidation + rising volume + closes near highs + higher lows
+// Extended features: momentum / RSI / volatility -> composite trend score in [-1, 1]
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const avg = a => a.reduce((x, y) => x + y, 0) / (a.length || 1);
 function rsi(closes, n = 14) {
@@ -138,31 +139,31 @@ function rsi(closes, n = 14) {
   return g + l === 0 ? 50 : (l === 0 ? 100 : 100 - 100 / (1 + g / l));
 }
 function inferScore(candles) {
-  // 兼容纯 closes 数组（无量能时吸筹/出货模型自动降权为 0）
+  // Accepts plain closes arrays too (without volume, accumulation/distribution models degrade to 0)
   const ks = candles.map(k => typeof k === 'number' ? { c: k, h: k, l: k, v: 0 } : { c: +k.c ?? +k.close, h: +k.h || +k.c, l: +k.l || +k.c, v: +k.v || 0 });
   const closes = ks.map(k => k.c);
   const last = closes[closes.length - 1];
   const hasVol = ks.some(k => k.v > 0);
 
-  // --- 🚜 推土机趋势 ---
+  // --- 🚜 Bulldozer Trend ---
   const W = Math.min(14, closes.length - 1);
   let ups = 0;
   for (let i = closes.length - W; i < closes.length; i++) if (closes[i] > closes[i - 1]) ups++;
   const upRatio = W ? ups / W : 0.5;
   let bulldozer;
-  if (upRatio >= 0.7) bulldozer = 0.5 + (upRatio - 0.7) / 0.3 * 0.5;        // 持续推高 → 持多
-  else if (upRatio <= 0.3) bulldozer = -(0.5 + (0.3 - upRatio) / 0.3 * 0.5); // 持续出货 → 持空
-  else bulldozer = (upRatio - 0.5) * 0.8;                                    // 无单边 → 弱信号
-  // 结构锚：破近窗锚点则趋势失效降权
+  if (upRatio >= 0.7) bulldozer = 0.5 + (upRatio - 0.7) / 0.3 * 0.5;        // grinding up -> long
+  else if (upRatio <= 0.3) bulldozer = -(0.5 + (0.3 - upRatio) / 0.3 * 0.5); // steady distribution -> short
+  else bulldozer = (upRatio - 0.5) * 0.8;                                    // no one-way move -> weak signal
+  // Structural anchor: trend is de-weighted if the window anchor breaks
   const anchorWin = closes.slice(-W - 1, -1);
   if (bulldozer > 0 && last < Math.min(...anchorWin)) bulldozer *= 0.35;
   if (bulldozer < 0 && last > Math.max(...anchorWin)) bulldozer *= 0.35;
 
-  // --- 公共价量特征 ---
+  // --- Shared price-volume features ---
   const half = Math.floor(ks.length / 2);
   const baseK = ks.slice(0, half), recentK = ks.slice(half);
   const volRatio = hasVol ? avg(recentK.map(k => k.v)) / (avg(baseK.map(k => k.v)) || 1) : 1;
-  const closeLoc = avg(recentK.map(k => k.h > k.l ? (k.c - k.l) / (k.h - k.l) : 0.5)); // 收盘在K线内位置
+  const closeLoc = avg(recentK.map(k => k.h > k.l ? (k.c - k.l) / (k.h - k.l) : 0.5)); // close position within the candle range
   let downVol = 0, totVol = 0;
   for (let i = Math.max(1, ks.length - W); i < ks.length; i++) {
     totVol += ks[i].v;
@@ -176,21 +177,21 @@ function inferScore(candles) {
   const higherLows = lowsPrev.length && Math.min(...lows5) > Math.min(...lowsPrev);
   const lowerHighs = highsPrev.length && Math.max(...highs5) < Math.max(...highsPrev);
 
-  // --- 🧲 庄家吸筹 (0..1) ---
+  // --- 🧲 Whale Accumulation (0..1) ---
   const accum = !hasVol ? 0 : clamp(
-    clamp((0.35 - pricePos) / 0.35, 0, 1) * 0.30 +   // 低位区
-    clamp(volRatio - 1, 0, 1) * 0.30 +               // 量能抬升
-    clamp((closeLoc - 0.5) * 2, 0, 1) * 0.25 +       // 收盘贴上沿（有承接）
-    (higherLows ? 0.15 : 0), 0, 1);                  // 低点抬高
+    clamp((0.35 - pricePos) / 0.35, 0, 1) * 0.30 +   // low price zone
+    clamp(volRatio - 1, 0, 1) * 0.30 +               // rising volume
+    clamp((closeLoc - 0.5) * 2, 0, 1) * 0.25 +       // closes near highs (absorption)
+    (higherLows ? 0.15 : 0), 0, 1);                  // higher lows
 
-  // --- 📉 庄家出货 (0..1) ---
+  // --- 📉 Whale Distribution (0..1) ---
   const distrib = !hasVol ? 0 : clamp(
-    clamp((pricePos - 0.65) / 0.35, 0, 1) * 0.25 +   // 高位区
-    clamp((downVolShare - 0.5) * 2, 0, 1) * 0.30 +   // 下跌K放量
-    clamp((0.5 - closeLoc) * 2, 0, 1) * 0.25 +       // 收盘贴下沿（抛压）
-    (lowerHighs ? 0.20 : 0), 0, 1);                  // 高点下移
+    clamp((pricePos - 0.65) / 0.35, 0, 1) * 0.25 +   // high price zone
+    clamp((downVolShare - 0.5) * 2, 0, 1) * 0.30 +   // heavy volume on down candles
+    clamp((0.5 - closeLoc) * 2, 0, 1) * 0.25 +       // closes near lows (selling pressure)
+    (lowerHighs ? 0.20 : 0), 0, 1);                  // lower highs
 
-  // --- 扩展特征：动量 / RSI / 波动率 ---
+  // --- Extended features: momentum / RSI / volatility ---
   const w10 = closes.slice(-10);
   const mom = last / (avg(w10) || last) - 1;
   const rets = closes.slice(1).map((v, i) => v / closes[i] - 1);
@@ -198,10 +199,10 @@ function inferScore(candles) {
   const vol = Math.sqrt(avg(rets.map(r => (r - mean) ** 2)));
   const r = rsi(closes);
 
-  // --- 综合评分 ---
+  // --- Composite score ---
   let score = bulldozer * 0.45 + (accum - distrib) * 0.25
     + Math.tanh(mom * 120) * 0.20 + ((r - 50) / 50) * 0.10;
-  if (vol > 0.01) score *= 0.7; // 高波动衰减
+  if (vol > 0.01) score *= 0.7; // dampen in high volatility
   score = +clamp(score, -1, 1).toFixed(4);
 
   const regime =
@@ -280,7 +281,7 @@ async function heartbeat() {
 (async () => {
   console.log(bold(amber(`
    ██╗      ██████╗  █████╗ ██╗    LGAI Node v${VERSION}
-   ██║     ██╔════╝ ██╔══██╗██║    LGAI · Trusted Intelligence Network
+   ██║     ██╔════╝ ██╔══██╗██║    The Trusted Intelligence Network for AI Agents
    ██║     ██║  ███╗███████║██║    ${MOCK ? '[MOCK data source]' : '[Binance→OKX live data]'}
    ███████╗╚██████╔╝██╔══██║██║
    ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝    coordinator: ${COORD}
@@ -299,7 +300,7 @@ async function heartbeat() {
     fs.writeFileSync(stateFile, JSON.stringify(cred), { mode: 0o600 });
     log(green('✓'), `Registered on ${bold(reg.network)}, node ID ${bold(cred.nodeId.slice(0, 8))}`);
   }
-  // 凭据失效（如协调端重置）→ 自动重新注册
+  // Stale credentials (e.g. coordinator reset) -> auto re-register
   async function withReauth(fn) {
     try { return await fn(); }
     catch (e) {
@@ -312,7 +313,7 @@ async function heartbeat() {
   if (!cred) await register();
   else log(dim(`using saved credentials ${cred.nodeId.slice(0, 8)} (${stateFile})`));
 
-  // ---- 一次性命令：数据市场 / Agent 情报 ----
+  // ---- One-shot commands: marketplace / agent intel ----
   if (flag('--market')) {
     const { listings, volume } = await api('/api/market/listings', { authd: false });
     console.log(bold('AI Data Marketplace') + dim(` (total volume: ${volume} pts)`));
@@ -335,7 +336,7 @@ async function heartbeat() {
   log(green('✓'), `heartbeat OK · node ${bold(NAME)} (${os.platform()}/${os.arch()}, ${os.cpus().length} cores)`);
 
   if (ONCE) {
-    // 自检模式：轮询直到拿到并完成任务（含派生任务），随后退出
+    // Self-check mode: poll until tasks (incl. derived ones) are claimed and done, then exit
     let idle = 0;
     for (let i = 0; i < 20 && idle < 3; i++) {
       const got = await pollOnce().catch(() => 0);

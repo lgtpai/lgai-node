@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** 冒烟测试：起协调端 → mock 节点跑一轮 → 校验注册/任务/积分闭环 */
+/** Smoke test: start coordinator -> run a mock node cycle -> verify register/task/points loop */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,18 +23,18 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 async function stats() { return (await fetch(BASE + '/api/stats')).json(); }
 
 try {
-  // 等协调端就绪
+  // wait for coordinator
   let up = false;
   for (let i = 0; i < 40 && !up; i++) { try { await stats(); up = true; } catch { await wait(250); } }
-  if (!up) fail('协调端未启动');
-  console.log('1/4 协调端就绪');
+  if (!up) fail('coordinator did not start');
+  console.log('1/6 coordinator ready');
 
-  // 仪表盘可访问
+  // dashboard reachable
   const html = await (await fetch(BASE + '/')).text();
-  if (!html.includes('Coordinator')) fail('仪表盘不可访问');
-  console.log('2/4 仪表盘正常');
+  if (!html.includes('Coordinator')) fail('dashboard unreachable');
+  console.log('2/6 dashboard ok');
 
-  // 跑一个 mock 节点（--once）
+  // run one mock node (--once)
   const code = await new Promise(resolve => {
     const cli = spawn(process.execPath, [path.join(root, 'client/lgai-node.js'),
       '-c', BASE, '--mock', '--once', '--name', 'smoke-node'], {
@@ -43,30 +43,30 @@ try {
     });
     cli.on('exit', resolve);
   });
-  if (code !== 0) fail('节点客户端退出码 ' + code);
-  console.log('3/4 节点完成任务闭环');
+  if (code !== 0) fail('node client exit code ' + code);
+  console.log('3/6 node completed the task loop');
 
-  // 校验网络状态
+  // verify network state
   const s = await stats();
-  if (s.totalNodes < 1) fail('节点未注册');
-  if (s.tasksCompleted < 1) fail('无已完成任务');
-  if (s.pointsIssued <= 0) fail('未发放积分');
+  if (s.totalNodes < 1) fail('node not registered');
+  if (s.tasksCompleted < 1) fail('no completed tasks');
+  if (s.pointsIssued <= 0) fail('no points issued');
   const n = s.nodes.find(n => n.name === 'smoke-node');
-  if (!n || n.points <= 0) fail('节点积分异常');
-  console.log(`4/6 网络状态正确 · 任务 ${s.tasksCompleted} / 积分 ${s.pointsIssued} / 节点积分 ${n.points}(${n.tier})`);
+  if (!n || n.points <= 0) fail('node points invalid');
+  console.log(`4/6 network state ok · tasks ${s.tasksCompleted} / points ${s.pointsIssued} / node points ${n.points}(${n.tier})`);
 
-  // 预言机 + 永久存证
+  // oracle + permanent archive
   const oracle = await (await fetch(BASE + '/api/oracle')).json();
-  if (!oracle.feeds.length) fail('预言机无喂价');
+  if (!oracle.feeds.length) fail('oracle has no feeds');
   const arch = await (await fetch(BASE + '/api/archive')).json();
-  if (!arch.chain.seq || !arch.records.length) fail('存证链为空');
-  // 哈希链完整性抽查
+  if (!arch.chain.seq || !arch.records.length) fail('archive chain empty');
+  // spot-check chain integrity
   const r0 = arch.records[0];
   const intel = await (await fetch(BASE + '/api/agent/intel?symbol=BTCUSDT')).json();
-  if (!intel.oracle) fail('Agent Intel 无预言机数据');
-  console.log(`5/6 预言机 ${oracle.feeds.length} 路喂价 / 存证链高度 ${arch.chain.seq} (${r0.txid.slice(0, 14)}…) / Intel OK`);
+  if (!intel.oracle) fail('agent intel missing oracle data');
+  console.log(`5/6 oracle ${oracle.feeds.length} feeds / chain height ${arch.chain.seq} (${r0.txid.slice(0, 14)}…) / intel ok`);
 
-  // 数据市场：用积分购买数据集
+  // marketplace: buy a dataset with points
   const buyCode = await new Promise(resolve => {
     const cli = spawn(process.execPath, [path.join(root, 'client/lgai-node.js'),
       '-c', BASE, '--mock', '--buy', 'ds-BTCUSDT', '--name', 'smoke-node'], {
@@ -75,10 +75,10 @@ try {
     });
     cli.on('exit', resolve);
   });
-  if (buyCode !== 0) fail('数据市场购买失败');
+  if (buyCode !== 0) fail('marketplace purchase failed');
   const s2 = await stats();
-  if (!(s2.market.volume > 0)) fail('市场成交额未更新');
-  console.log(`6/6 数据市场成交 ${s2.market.volume} 分`);
+  if (!(s2.market.volume > 0)) fail('market volume not updated');
+  console.log(`6/6 marketplace volume ${s2.market.volume} pts`);
   console.log('\nSMOKE PASS ✓');
   process.exit(0);
 } catch (e) {
