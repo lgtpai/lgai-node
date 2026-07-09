@@ -150,9 +150,10 @@ function finalize(t) {
     const hist = (S.marketHistory[t.symbol] ||= []);
     hist.push({ ts: now(), c: mid, h: medOf('high'), l: medOf('low'), v: medOf('vol') || 0, close: mid });
     if (hist.length > 300) hist.splice(0, hist.length - 300);
-    // 去中心化预言机：多节点共识喂价 + 永久存证
-    const rec = archivePut('oracle_price', { symbol: t.symbol, price: mid, nodes: entries.length, maxDevPct: +(maxDev * 100).toFixed(3) });
-    S.oracle[t.symbol] = { symbol: t.symbol, price: mid, ts: now(), contributors: entries.length, deviationPct: +(maxDev * 100).toFixed(3), proof: rec.txid };
+    // 去中心化预言机：多节点共识喂价 + 永久存证（标注数据源，mock 数据一目了然）
+    const sources = [...new Set(entries.map(([, r]) => r.source).filter(Boolean))].join('+') || '?';
+    const rec = archivePut('oracle_price', { symbol: t.symbol, price: mid, nodes: entries.length, maxDevPct: +(maxDev * 100).toFixed(3), source: sources });
+    S.oracle[t.symbol] = { symbol: t.symbol, price: mid, ts: now(), contributors: entries.length, deviationPct: +(maxDev * 100).toFixed(3), proof: rec.txid, source: sources };
     maybeCreatePrediction(t.symbol);
     // AI Agent 协作：多节点集成推理（推土机/吸筹/出货三大模型）
     if (hist.length >= 12 && Math.random() < 0.6) {
