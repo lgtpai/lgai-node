@@ -5,7 +5,7 @@
 #   --service : auto-start on login (launchd on macOS, systemd --user on Linux)
 set -euo pipefail
 
-COORD="${LGAI_COORDINATOR:-http://127.0.0.1:8402}"
+COORD="${LGAI_COORDINATOR:-http://127.0.0.1:18402}"
 NODE_NAME="$(hostname -s 2>/dev/null || echo lgai-node)"
 PREFIX="${LGAI_HOME:-$HOME/.lgai-node}"
 SERVICE=0
@@ -117,4 +117,4 @@ echo
 say "done. try it:"
 echo "    lgai-node --coordinator $COORD --name $NODE_NAME"
 echo "    lgai-node --mock            # offline test"
-echo "    lgai-coordinator            # run your own coordinator (dashboard :8402)"
+echo "    lgai-coordinator            # run your own coordinator (dashboard :18402)"

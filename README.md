@@ -9,14 +9,14 @@ Node client + lightweight coordinator for the LGAI Trusted Intelligence Network.
 
 **macOS / Linux / Raspberry Pi** — one line:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lgtpai/lgai-node/main/packaging/get.sh | bash -s -- --coordinator http://<server>:8402 --service
+curl -fsSL https://raw.githubusercontent.com/lgtpai/lgai-node/main/packaging/get.sh | bash -s -- --coordinator http://<server>:18402 --service
 ```
 Or download `lgai-node-<v>-macos-linux.tar.gz` from [Releases](https://github.com/lgtpai/lgai-node/releases), extract and run `./install.sh [--coordinator URL] [--name NAME] [--service]`.
 `--service` auto-starts on login (launchd on macOS, systemd on Linux). Uninstall: `./uninstall.sh`.
 
 **Windows 10/11** — download `lgai-node-<v>-windows.zip`, extract, then:
 ```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1 -Coordinator http://<server>:8402 -Service
+powershell -ExecutionPolicy Bypass -File install.ps1 -Coordinator http://<server>:18402 -Service
 ```
 Installs to `%LOCALAPPDATA%\LGAI\node`, adds `lgai-node` / `lgai-coordinator` to PATH; `-Service` registers a logon Scheduled Task. Uninstall: `uninstall.ps1`.
 
@@ -25,12 +25,12 @@ Build packages yourself: `packaging/build.sh` → `dist/`.
 ## Quick Start
 
 ```bash
-# 1. Start the coordinator (deploy on your server, default port 8402)
+# 1. Start the coordinator (deploy on your server, default port 18402)
 node coordinator/server.js
-# Dashboard: http://localhost:8402
+# Dashboard: http://localhost:18402
 
 # 2. Start a node on any device
-node client/lgai-node.js --coordinator http://<server>:8402 --name my-pi
+node client/lgai-node.js --coordinator http://<server>:18402 --name my-pi
 
 # Offline test (mock market data source)
 node client/lgai-node.js --mock
@@ -69,7 +69,7 @@ Nodes collect data → Coordinator consensus pricing → Network predictions (mo
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | 8402 | Listen port |
+| `PORT` | 18402 | Listen port |
 | `SYMBOLS` | BTCUSDT,ETHUSDT,SOLUSDT | Task symbols |
 | `TICK_MS` | 45000 | Task generation interval |
 | `HORIZON_MIN` | 15 | Prediction verification horizon (minutes) |

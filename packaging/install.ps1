@@ -3,7 +3,7 @@
 #   powershell -ExecutionPolicy Bypass -File install.ps1 [-Coordinator URL] [-Name NAME] [-Service]
 #   -Service : auto-start at logon via Scheduled Task
 param(
-  [string]$Coordinator = "http://127.0.0.1:8402",
+  [string]$Coordinator = "http://127.0.0.1:18402",
   [string]$Name = $env:COMPUTERNAME,
   [switch]$Service
 )
@@ -60,4 +60,4 @@ Write-Host ""
 Say "done. try it (new terminal):"
 Write-Host "    lgai-node --coordinator $Coordinator --name $Name"
 Write-Host "    lgai-node --mock            # offline test"
-Write-Host "    lgai-coordinator            # run your own coordinator (dashboard :8402)"
+Write-Host "    lgai-coordinator            # run your own coordinator (dashboard :18402)"

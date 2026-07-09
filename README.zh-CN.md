@@ -9,14 +9,14 @@
 
 **macOS / Linux / 树莓派** — 一行命令：
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lgtpai/lgai-node/main/packaging/get.sh | bash -s -- --coordinator http://<服务器>:8402 --service
+curl -fsSL https://raw.githubusercontent.com/lgtpai/lgai-node/main/packaging/get.sh | bash -s -- --coordinator http://<服务器>:18402 --service
 ```
 或从 [Releases](https://github.com/lgtpai/lgai-node/releases) 下载 `lgai-node-<版本>-macos-linux.tar.gz`，解压后运行 `./install.sh [--coordinator URL] [--name 名称] [--service]`。
 `--service` 开机自启（macOS 用 launchd，Linux 用 systemd）。卸载：`./uninstall.sh`。
 
 **Windows 10/11** — 下载 `lgai-node-<版本>-windows.zip`，解压后：
 ```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1 -Coordinator http://<服务器>:8402 -Service
+powershell -ExecutionPolicy Bypass -File install.ps1 -Coordinator http://<服务器>:18402 -Service
 ```
 安装到 `%LOCALAPPDATA%\LGAI\node`，`lgai-node` / `lgai-coordinator` 加入 PATH；`-Service` 注册登录自启计划任务。卸载：`uninstall.ps1`。
 
@@ -25,12 +25,12 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Coordinator http://<服务
 ## 快速开始
 
 ```bash
-# 1. 启动协调端（部署在你的服务器上，默认端口 8402）
+# 1. 启动协调端（部署在你的服务器上，默认端口 18402）
 node coordinator/server.js
-# 仪表盘: http://localhost:8402
+# 仪表盘: http://localhost:18402
 
 # 2. 任意设备启动节点
-node client/lgai-node.js --coordinator http://<服务器>:8402 --name my-pi
+node client/lgai-node.js --coordinator http://<服务器>:18402 --name my-pi
 
 # 离线测试（模拟行情数据源）
 node client/lgai-node.js --mock
@@ -69,7 +69,7 @@ npm run smoke
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `PORT` | 8402 | 监听端口 |
+| `PORT` | 18402 | 监听端口 |
 | `SYMBOLS` | BTCUSDT,ETHUSDT,SOLUSDT | 任务币种 |
 | `TICK_MS` | 45000 | 任务生成周期 |
 | `HORIZON_MIN` | 15 | 预测验证时限（分钟） |

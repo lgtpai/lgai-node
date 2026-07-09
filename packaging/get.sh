@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # LGAI Node one-line installer (macOS / Linux / Raspberry Pi)
 #   curl -fsSL https://raw.githubusercontent.com/lgtpai/lgai-node/main/packaging/get.sh | bash
-#   curl -fsSL .../get.sh | bash -s -- --coordinator http://host:8402 --service
+#   curl -fsSL .../get.sh | bash -s -- --coordinator http://host:18402 --service
 set -euo pipefail
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

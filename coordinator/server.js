@@ -5,7 +5,7 @@
  *       共识校验、贡献积分账本、网页仪表盘。
  * 零依赖，Node >= 18。
  *
- *   PORT=8402 SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT node coordinator/server.js
+ *   PORT=18402 SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT node coordinator/server.js
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -14,8 +14,8 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.1.0';
-const PORT = +(process.env.PORT || 8402);
+const VERSION = '0.1.1';
+const PORT = +(process.env.PORT || 18402);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const TICK_MS = +(process.env.TICK_MS || 45_000);       // 任务生成周期
 const HORIZON_MIN = +(process.env.HORIZON_MIN || 15);   // 预测验证时限(分钟)

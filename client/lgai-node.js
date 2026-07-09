@@ -3,7 +3,7 @@
  * LGAI Node — 跨平台节点客户端 (Phase 02)
  * 树莓派 / Mac / PC / 服务器 / 云主机，只需 Node >= 18，零依赖。
  *
- *   node client/lgai-node.js --coordinator http://<host>:8402 [--name myPi] [--mock] [--once]
+ *   node client/lgai-node.js --coordinator http://<host>:18402 [--name myPi] [--mock] [--once]
  *
  * 职能（对应官网四大节点角色）：
  *   数据计算  market_data   拉取公开行情并上报，参与多节点共识
@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 
 // ---------------- args ----------------
 const args = process.argv.slice(2);
@@ -25,7 +25,7 @@ const opt = (n, d) => { const i = args.indexOf(n); return i >= 0 && args[i + 1] 
 if (flag('--help') || flag('-h')) {
   console.log(`LGAI Node v${VERSION}
 用法: node lgai-node.js [选项]
-  --coordinator, -c <url>  协调端地址 (默认 $LGAI_COORDINATOR 或 http://127.0.0.1:8402)
+  --coordinator, -c <url>  协调端地址 (默认 $LGAI_COORDINATOR 或 http://127.0.0.1:18402)
   --name <name>            节点名称 (默认主机名)
   --mock                   使用模拟行情数据源（离线/测试）
   --once                   跑一轮任务后退出（自检用）
@@ -35,7 +35,7 @@ if (flag('--help') || flag('-h')) {
   --help                   显示帮助`);
   process.exit(0);
 }
-const COORD = (opt('--coordinator', opt('-c', process.env.LGAI_COORDINATOR || 'http://127.0.0.1:8402'))).replace(/\/+$/, '');
+const COORD = (opt('--coordinator', opt('-c', process.env.LGAI_COORDINATOR || 'http://127.0.0.1:18402'))).replace(/\/+$/, '');
 const NAME = opt('--name', os.hostname().split('.')[0]);
 const MOCK = flag('--mock');
 const ONCE = flag('--once');
@@ -348,6 +348,6 @@ async function heartbeat() {
   log(dim('开始工作：每 8s 领取任务，每 30s 心跳。Ctrl+C 退出。'));
 })().catch(e => {
   console.error(red('启动失败:'), e.message || e);
-  console.error(dim('请确认协调端已启动且地址正确（--coordinator http://host:8402）'));
+  console.error(dim('请确认协调端已启动且地址正确（--coordinator http://host:18402）'));
   process.exit(1);
 });
