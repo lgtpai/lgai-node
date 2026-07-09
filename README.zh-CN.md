@@ -5,6 +5,23 @@
 猎狗AI (LGAI) 可信智能网络的节点客户端 + 轻量协调端。
 **零依赖**，任何装有 Node.js ≥ 18 的设备（树莓派 / Mac mini / PC / 服务器 / 云主机）直接运行，无需 `npm install`。
 
+## 安装（安装包方式）
+
+**macOS / Linux / 树莓派** — 一行命令：
+```bash
+curl -fsSL https://raw.githubusercontent.com/lgtpai/lgai-node/main/packaging/get.sh | bash -s -- --coordinator http://<服务器>:8402 --service
+```
+或从 [Releases](https://github.com/lgtpai/lgai-node/releases) 下载 `lgai-node-<版本>-macos-linux.tar.gz`，解压后运行 `./install.sh [--coordinator URL] [--name 名称] [--service]`。
+`--service` 开机自启（macOS 用 launchd，Linux 用 systemd）。卸载：`./uninstall.sh`。
+
+**Windows 10/11** — 下载 `lgai-node-<版本>-windows.zip`，解压后：
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 -Coordinator http://<服务器>:8402 -Service
+```
+安装到 `%LOCALAPPDATA%\LGAI\node`，`lgai-node` / `lgai-coordinator` 加入 PATH；`-Service` 注册登录自启计划任务。卸载：`uninstall.ps1`。
+
+自行打包：`packaging/build.sh` → 生成 `dist/`。
+
 ## 快速开始
 
 ```bash

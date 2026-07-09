@@ -5,6 +5,23 @@
 Node client + lightweight coordinator for the LGAI Trusted Intelligence Network.
 **Zero dependencies** — any device with Node.js ≥ 18 (Raspberry Pi / Mac mini / PC / server / cloud) runs it directly, no `npm install` required.
 
+## Install (packaged)
+
+**macOS / Linux / Raspberry Pi** — one line:
+```bash
+curl -fsSL https://raw.githubusercontent.com/lgtpai/lgai-node/main/packaging/get.sh | bash -s -- --coordinator http://<server>:8402 --service
+```
+Or download `lgai-node-<v>-macos-linux.tar.gz` from [Releases](https://github.com/lgtpai/lgai-node/releases), extract and run `./install.sh [--coordinator URL] [--name NAME] [--service]`.
+`--service` auto-starts on login (launchd on macOS, systemd on Linux). Uninstall: `./uninstall.sh`.
+
+**Windows 10/11** — download `lgai-node-<v>-windows.zip`, extract, then:
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 -Coordinator http://<server>:8402 -Service
+```
+Installs to `%LOCALAPPDATA%\LGAI\node`, adds `lgai-node` / `lgai-coordinator` to PATH; `-Service` registers a logon Scheduled Task. Uninstall: `uninstall.ps1`.
+
+Build packages yourself: `packaging/build.sh` → `dist/`.
+
 ## Quick Start
 
 ```bash
