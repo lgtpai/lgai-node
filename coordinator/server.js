@@ -76,18 +76,18 @@ function createTask(type, symbol, payload, redundancy) {
 // ---- 智能贡献激励：声誉分级，以贡献质量而非算力定酬 ----
 function tierOf(n) {
   const strikeRate = n.tasksDone ? n.strikes / n.tasksDone : 0;
-  if (n.points >= 300 && strikeRate < 0.05) return '金';
-  if (n.points >= 100 && strikeRate < 0.15) return '银';
-  return '铜';
+  if (n.points >= 300 && strikeRate < 0.05) return 'gold';
+  if (n.points >= 100 && strikeRate < 0.15) return 'silver';
+  return 'bronze';
 }
-const TIER_MULT = { '金': 1.5, '银': 1.2, '铜': 1.0 };
+const TIER_MULT = { gold: 1.5, silver: 1.2, bronze: 1.0 };
 function award(nodeId, task, basePts, note) {
   const n = S.nodes[nodeId]; if (!n) return;
   const tier = tierOf(n);
   const pts = Math.round(basePts * TIER_MULT[tier]);
   n.points += pts; n.tasksDone += 1;
   S.stats.pointsIssued += pts;
-  S.ledger.unshift({ ts: now(), nodeId, name: n.name, taskId: task.id, type: task.type, symbol: task.symbol, points: pts, note: note + (tier !== '铜' ? ` ×${TIER_MULT[tier]}(${tier})` : '') });
+  S.ledger.unshift({ ts: now(), nodeId, name: n.name, taskId: task.id, type: task.type, symbol: task.symbol, points: pts, note: note + (tier !== 'bronze' ? ` ×${TIER_MULT[tier]}(${tier})` : '') });
   S.ledger = S.ledger.slice(0, 400);
 }
 
@@ -123,14 +123,14 @@ function maybeCreatePrediction(symbol) {
     const closes = hist.slice(-10).map(h => h.close);
     const sma = closes.reduce((a, b) => a + b, 0) / closes.length;
     dir = last > sma ? 'LONG' : 'SHORT';
-    basis = 'SMA动量';
+    basis = 'SMA momentum';
   }
   S.predictions.unshift({
     id: uid(), symbol, dir, basis,
     price0: last, createdAt: now(), horizonMin: HORIZON_MIN, status: 'open',
   });
   S.predictions = S.predictions.slice(0, 120);
-  log(`[pred] ${symbol} ${dir} @ ${last} 依据=${basis}`);
+  log(`[pred] ${symbol} ${dir} @ ${last} basis=${basis}`);
 }
 
 function finalize(t) {
@@ -143,8 +143,8 @@ function finalize(t) {
     for (const [nid, r] of entries) {
       const dev = Math.abs(+r.close - mid) / mid;
       maxDev = Math.max(maxDev, dev);
-      if (dev <= 0.005) award(nid, t, POINTS.market_data, `close=${r.close} 共识通过`);
-      else strike(nid, t, `close=${r.close} 偏离共识 ${(dev * 100).toFixed(2)}%`);
+      if (dev <= 0.005) award(nid, t, POINTS.market_data, `close=${r.close} consensus ok`);
+      else strike(nid, t, `close=${r.close} deviates ${(dev * 100).toFixed(2)}% from consensus`);
     }
     const medOf = k => { const v = entries.map(([, r]) => +r[k]).filter(Number.isFinite); return v.length ? median(v) : mid; };
     const hist = (S.marketHistory[t.symbol] ||= []);
@@ -165,7 +165,7 @@ function finalize(t) {
       if (Number.isFinite(r.score) && r.score >= -1 && r.score <= 1) {
         award(nid, t, POINTS.ai_infer, `score=${r.score.toFixed(3)} ${r.regime || ''}`);
         valid.push({ nid, ...r });
-      } else strike(nid, t, '无效推理结果');
+      } else strike(nid, t, 'invalid inference result');
     }
     if (valid.length) {
       // 集成共识：多智能体评分取中位数，形态取多数
@@ -176,9 +176,9 @@ function finalize(t) {
       const best = valid.reduce((a, b) => Math.abs(b.score - score) < Math.abs(a.score - score) ? b : a);
       const rec = archivePut('ai_signal', { symbol: t.symbol, score, regime, contributors: valid.length });
       S.signals.unshift({
-        ts: now(), symbol: t.symbol, score, regime: String(regime || '').slice(0, 12),
+        ts: now(), symbol: t.symbol, score, regime: String(regime || '').slice(0, 24),
         features: best.features, contributors: valid.length,
-        name: valid.length > 1 ? `${valid.length} 节点集成` : S.nodes[valid[0].nid]?.name,
+        name: valid.length > 1 ? `${valid.length}-node ensemble` : S.nodes[valid[0].nid]?.name,
         proof: rec.txid,
       });
       S.signals = S.signals.slice(0, 100);
@@ -188,8 +188,8 @@ function finalize(t) {
     const winVotes = verdicts.filter(v => v === 'WIN').length;
     const majority = winVotes * 2 >= verdicts.length ? 'WIN' : 'LOSS';
     for (const [nid, r] of entries) {
-      if (r.verdict === majority) award(nid, t, POINTS.signal_verify, `verdict=${r.verdict} 与多数一致`);
-      else strike(nid, t, `verdict=${r.verdict} 与多数不一致`);
+      if (r.verdict === majority) award(nid, t, POINTS.signal_verify, `verdict=${r.verdict} majority match`);
+      else strike(nid, t, `verdict=${r.verdict} minority`);
     }
     const p = S.predictions.find(p => p.id === t.payload.predictionId);
     if (p) {
@@ -268,8 +268,8 @@ const DASHBOARD = fs.readFileSync(path.join(__dirname, 'dashboard.html'), 'utf8'
 function listings() {
   const ls = [];
   for (const sym of SYMBOLS) {
-    ls.push({ id: 'ds-' + sym, kind: 'dataset', symbol: sym, title: `${sym} 共识行情数据集`, price: 50, size: (S.marketHistory[sym] || []).length });
-    ls.push({ id: 'sig-' + sym, kind: 'signal', symbol: sym, title: `${sym} AI 信号流订阅`, price: 30, size: S.signals.filter(s => s.symbol === sym).length });
+    ls.push({ id: 'ds-' + sym, kind: 'dataset', symbol: sym, title: `${sym} consensus OHLCV dataset`, price: 50, size: (S.marketHistory[sym] || []).length });
+    ls.push({ id: 'sig-' + sym, kind: 'signal', symbol: sym, title: `${sym} AI signal feed`, price: 30, size: S.signals.filter(s => s.symbol === sym).length });
   }
   return ls;
 }
@@ -379,13 +379,13 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const item = listings().find(l => l.id === b.listingId);
       if (!item) return send(res, 404, { error: 'listing not found' });
-      if (node.points < item.price) return send(res, 402, { error: `积分不足（需 ${item.price}，当前 ${node.points}）` });
+      if (node.points < item.price) return send(res, 402, { error: `insufficient points (need ${item.price}, have ${node.points})` });
       node.points -= item.price;
       const rec = archivePut('market_sale', { buyer: node.name, listingId: item.id, title: item.title, price: item.price });
       S.market.sales.unshift({ ts: now(), nodeId: node.id, name: node.name, listingId: item.id, title: item.title, price: item.price, proof: rec.txid });
       S.market.sales = S.market.sales.slice(0, 100);
       S.stats.marketVolume = (S.stats.marketVolume || 0) + item.price;
-      S.ledger.unshift({ ts: now(), nodeId: node.id, name: node.name, taskId: rec.txid, type: 'market', symbol: item.symbol, points: -item.price, note: `购买 ${item.title}` });
+      S.ledger.unshift({ ts: now(), nodeId: node.id, name: node.name, taskId: rec.txid, type: 'market', symbol: item.symbol, points: -item.price, note: `purchase: ${item.title}` });
       S.ledger = S.ledger.slice(0, 400);
       const data = item.kind === 'dataset'
         ? (S.marketHistory[item.symbol] || []).slice(-100)

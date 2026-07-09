@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LGAI Coordinator — 节点网络仪表盘</title>
+<title>LGAI Coordinator — Node Network Dashboard</title>
 <style>
 :root{
   --bg:#020617;--card:rgba(15,23,42,.55);--line:rgba(148,163,184,.13);
@@ -28,9 +28,16 @@ header{
   display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;color:#fff}
 h1{font-size:18px;font-weight:800}
 h1 span{color:var(--amber)}
+h1 .sub{color:var(--dim);font-weight:600;font-size:12px}
 .net{margin-left:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px;font-weight:600}
 .net .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 9px var(--green);animation:pu 1.6s infinite}
 @keyframes pu{50%{opacity:.35}}
+.lang-btn{
+  font-size:12px;font-weight:800;padding:8px 14px;border-radius:9px;cursor:pointer;
+  border:1px solid var(--line);background:rgba(15,23,42,.7);color:var(--muted);
+  font-family:"SF Mono",Menlo,monospace;letter-spacing:.05em;transition:all .2s;
+}
+.lang-btn:hover{color:#fff;border-color:rgba(245,158,11,.45)}
 .wrap{max-width:1240px;margin:0 auto;padding:26px 24px 0}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:14px}
 .stat{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:18px 20px}
@@ -66,93 +73,148 @@ footer{max-width:1240px;margin:22px auto 0;padding:0 24px;font-size:11.5px;color
 <header>
   <div class="head-in">
     <div class="mark">LG</div>
-    <h1>猎狗<span>AI</span> Coordinator <span style="color:var(--dim);font-weight:600;font-size:12px">节点网络仪表盘</span></h1>
+    <h1><span id="hBrand">LG<span>AI</span></span> Coordinator <span class="sub" id="hSub">Node Network Dashboard</span></h1>
     <div class="net mono"><span class="dot"></span><span id="net">LGAI Testnet</span></div>
+    <button class="lang-btn" id="langBtn" onclick="toggleLang()">中文</button>
   </div>
 </header>
 
 <div class="wrap">
   <div class="cards">
-    <div class="stat"><div class="k">在线节点</div><div class="v v-green" id="online">—</div></div>
-    <div class="stat"><div class="k">累计节点</div><div class="v v-blue" id="total">—</div></div>
-    <div class="stat"><div class="k">已完成任务</div><div class="v v-violet" id="tasks">—</div></div>
-    <div class="stat"><div class="k">已发积分</div><div class="v v-amber" id="points">—</div></div>
-    <div class="stat"><div class="k">预测胜率</div><div class="v v-pink" id="acc">—</div></div>
-    <div class="stat"><div class="k">永久存证</div><div class="v v-green" id="chain">—</div></div>
-    <div class="stat"><div class="k">市场成交</div><div class="v v-amber" id="vol">—</div></div>
+    <div class="stat"><div class="k" data-k="cOnline">Online Nodes</div><div class="v v-green" id="online">—</div></div>
+    <div class="stat"><div class="k" data-k="cTotal">Total Nodes</div><div class="v v-blue" id="total">—</div></div>
+    <div class="stat"><div class="k" data-k="cTasks">Tasks Done</div><div class="v v-violet" id="tasks">—</div></div>
+    <div class="stat"><div class="k" data-k="cPoints">Points Issued</div><div class="v v-amber" id="points">—</div></div>
+    <div class="stat"><div class="k" data-k="cAcc">Prediction Accuracy</div><div class="v v-pink" id="acc">—</div></div>
+    <div class="stat"><div class="k" data-k="cChain">Archive Height</div><div class="v v-green" id="chain">—</div></div>
+    <div class="stat"><div class="k" data-k="cVol">Market Volume</div><div class="v v-amber" id="vol">—</div></div>
   </div>
 
   <div class="cols">
     <div>
       <div class="panel">
-        <h2>节点列表 · NODES</h2>
-        <div style="overflow-x:auto">
-        <table>
-          <thead><tr><th>名称</th><th>平台</th><th>状态</th><th>等级</th><th>负载</th><th>积分</th><th>任务</th><th>违规</th><th>最后心跳</th></tr></thead>
-          <tbody id="nodes"><tr><td colspan="9" class="empty">等待节点接入…</td></tr></tbody>
-        </table>
-        </div>
+        <h2 data-k="pNodes">NODES</h2>
+        <div style="overflow-x:auto"><table>
+          <thead><tr id="thNodes"></tr></thead>
+          <tbody id="nodes"></tbody>
+        </table></div>
       </div>
       <div class="panel" style="margin-top:14px">
-        <h2>AI 推理信号 · 推土机 / 吸筹 / 出货</h2>
-        <div style="overflow-x:auto">
-        <table>
-          <thead><tr><th>交易对</th><th>综合评分</th><th>形态</th><th>🚜推土机</th><th>🧲吸筹</th><th>📉出货</th><th>RSI</th><th>节点</th><th>时间</th></tr></thead>
-          <tbody id="sigs"><tr><td colspan="9" class="empty">暂无推理信号</td></tr></tbody>
-        </table>
-        </div>
+        <h2 data-k="pSigs">AI INFERENCE SIGNALS · Bulldozer / Accumulation / Distribution</h2>
+        <div style="overflow-x:auto"><table>
+          <thead><tr id="thSigs"></tr></thead>
+          <tbody id="sigs"></tbody>
+        </table></div>
       </div>
       <div class="panel" style="margin-top:14px">
-        <h2>网络预测 · PREDICTIONS</h2>
-        <div style="overflow-x:auto">
-        <table>
-          <thead><tr><th>交易对</th><th>方向</th><th>依据</th><th>入场价</th><th>出场价</th><th>状态</th><th>时间</th></tr></thead>
-          <tbody id="preds"><tr><td colspan="7" class="empty">暂无预测</td></tr></tbody>
-        </table>
-        </div>
+        <h2 data-k="pPreds">NETWORK PREDICTIONS</h2>
+        <div style="overflow-x:auto"><table>
+          <thead><tr id="thPreds"></tr></thead>
+          <tbody id="preds"></tbody>
+        </table></div>
       </div>
     </div>
     <div>
       <div class="panel">
-        <h2>去中心化预言机 · ORACLE FEEDS</h2>
-        <div style="overflow-x:auto">
-        <table>
-          <thead><tr><th>交易对</th><th>共识价</th><th>数据源</th><th>偏差</th><th>节点数</th><th>存证</th></tr></thead>
-          <tbody id="oracle"><tr><td colspan="6" class="empty">暂无喂价</td></tr></tbody>
-        </table>
-        </div>
+        <h2 data-k="pOracle">DECENTRALIZED ORACLE · FEEDS</h2>
+        <div style="overflow-x:auto"><table>
+          <thead><tr id="thOracle"></tr></thead>
+          <tbody id="oracle"></tbody>
+        </table></div>
       </div>
       <div class="panel" style="margin-top:14px">
-        <h2>永久存证 · PERMANENT ARCHIVE (哈希链)</h2>
-        <div class="feed" id="archive" style="max-height:180px"><div class="empty">暂无存证</div></div>
+        <h2 data-k="pArchive">PERMANENT ARCHIVE · HASH CHAIN</h2>
+        <div class="feed" id="archive" style="max-height:180px"></div>
       </div>
       <div class="panel" style="margin-top:14px">
-        <h2>AI 数据市场 · DATA MARKETPLACE</h2>
-        <div style="overflow-x:auto">
-        <table>
-          <thead><tr><th>商品</th><th>类型</th><th>规模</th><th>价格</th></tr></thead>
-          <tbody id="listings"><tr><td colspan="4" class="empty">暂无商品</td></tr></tbody>
-        </table>
-        </div>
+        <h2 data-k="pMarket">AI DATA MARKETPLACE</h2>
+        <div style="overflow-x:auto"><table>
+          <thead><tr id="thMarket"></tr></thead>
+          <tbody id="listings"></tbody>
+        </table></div>
         <div class="feed" id="sales" style="max-height:130px"></div>
       </div>
       <div class="panel" style="margin-top:14px">
-        <h2>贡献账本 · CONTRIBUTION LEDGER</h2>
-        <div class="feed" id="ledger" style="max-height:260px"><div class="empty">暂无记录</div></div>
+        <h2 data-k="pLedger">CONTRIBUTION LEDGER</h2>
+        <div class="feed" id="ledger" style="max-height:260px"></div>
       </div>
     </div>
   </div>
 </div>
-<footer class="mono">LGAI Coordinator · Proof of Intelligence Testnet · 数据每 3 秒自动刷新</footer>
+<footer class="mono" id="foot">LGAI Coordinator · Proof of Intelligence Testnet · auto-refresh every 3s</footer>
 
 <script>
+const I18N={
+en:{
+  hSub:'Node Network Dashboard',
+  cOnline:'Online Nodes',cTotal:'Total Nodes',cTasks:'Tasks Done',cPoints:'Points Issued',cAcc:'Prediction Accuracy',cChain:'Archive Height',cVol:'Market Volume',
+  pNodes:'NODES',pSigs:'AI INFERENCE SIGNALS · Bulldozer / Accumulation / Distribution',pPreds:'NETWORK PREDICTIONS',
+  pOracle:'DECENTRALIZED ORACLE · FEEDS',pArchive:'PERMANENT ARCHIVE · HASH CHAIN',pMarket:'AI DATA MARKETPLACE',pLedger:'CONTRIBUTION LEDGER',
+  thNodes:['Name','Platform','Status','Tier','Load','Points','Tasks','Strikes','Last Seen'],
+  thSigs:['Pair','Score','Regime','🚜 Bulldozer','🧲 Accum','📉 Distrib','RSI','Node','Time'],
+  thPreds:['Pair','Direction','Basis','Entry','Exit','Status','Time'],
+  thOracle:['Pair','Consensus','Source','Deviation','Nodes','Proof'],
+  thMarket:['Item','Type','Size','Price'],
+  online:'Online',offline:'Offline',
+  tiers:{gold:'Gold',silver:'Silver',bronze:'Bronze'},
+  types:{market_data:'Data',ai_infer:'AI Inference',signal_verify:'Verify',market:'Marketplace'},
+  kinds:{oracle_price:'Oracle price',ai_signal:'AI signal',prediction:'Prediction verdict',market_sale:'Market sale'},
+  regimes:{},
+  status:{win:'WIN ✓',loss:'LOSS ✗',open:'Open',verifying:'Verifying'},
+  dataset:'Dataset',sigfeed:'Signal feed',pts:'pts',bought:'bought',
+  mock:'⚠ MOCK',
+  eNodes:'Waiting for nodes…',eSigs:'No inference signals yet',ePreds:'No predictions yet',eOracle:'No feeds yet',eArchive:'No records yet',eMarket:'No listings yet',eLedger:'No records yet',
+  foot:'LGAI Coordinator · Proof of Intelligence Testnet · auto-refresh every 3s',
+  ago:(s)=>s<60?Math.round(s)+'s ago':s<3600?Math.round(s/60)+'m ago':Math.round(s/3600)+'h ago',
+  offline_net:'connection lost…'
+},
+zh:{
+  hSub:'节点网络仪表盘',
+  cOnline:'在线节点',cTotal:'累计节点',cTasks:'已完成任务',cPoints:'已发积分',cAcc:'预测胜率',cChain:'存证链高',cVol:'市场成交',
+  pNodes:'节点列表 · NODES',pSigs:'AI 推理信号 · 推土机 / 吸筹 / 出货',pPreds:'网络预测 · PREDICTIONS',
+  pOracle:'去中心化预言机 · ORACLE FEEDS',pArchive:'永久存证 · 哈希链',pMarket:'AI 数据市场',pLedger:'贡献账本 · LEDGER',
+  thNodes:['名称','平台','状态','等级','负载','积分','任务','违规','最后心跳'],
+  thSigs:['交易对','综合评分','形态','🚜 推土机','🧲 吸筹','📉 出货','RSI','节点','时间'],
+  thPreds:['交易对','方向','依据','入场价','出场价','状态','时间'],
+  thOracle:['交易对','共识价','数据源','偏差','节点数','存证'],
+  thMarket:['商品','类型','规模','价格'],
+  online:'在线',offline:'离线',
+  tiers:{gold:'金',silver:'银',bronze:'铜'},
+  types:{market_data:'数据采集',ai_infer:'AI 推理',signal_verify:'信号验证',market:'数据市场'},
+  kinds:{oracle_price:'预言机喂价',ai_signal:'AI 信号',prediction:'预测裁定',market_sale:'市场成交'},
+  regimes:{'Bulldozer Long':'推土机多头','Bulldozer Short':'推土机出货','Whale Accumulation':'庄家吸筹','Whale Distribution':'庄家派发','Range':'震荡'},
+  status:{win:'WIN ✓',loss:'LOSS ✗',open:'进行中',verifying:'验证中'},
+  dataset:'数据集',sigfeed:'信号流',pts:'分',bought:'购入',
+  mock:'⚠ MOCK 模拟',
+  eNodes:'等待节点接入…',eSigs:'暂无推理信号',ePreds:'暂无预测',eOracle:'暂无喂价',eArchive:'暂无存证',eMarket:'暂无商品',eLedger:'暂无记录',
+  foot:'LGAI Coordinator · Proof of Intelligence Testnet · 数据每 3 秒自动刷新',
+  ago:(s)=>s<60?Math.round(s)+'秒前':s<3600?Math.round(s/60)+'分钟前':Math.round(s/3600)+'小时前',
+  offline_net:'连接中断…'
+}};
+let LANG='en';
+try{LANG=localStorage.getItem('lgai_dash_lang')||'en'}catch(e){}
+const T=()=>I18N[LANG];
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
-const ago=t=>{const s=(Date.now()-t)/1000;return s<60?Math.round(s)+'s前':s<3600?Math.round(s/60)+'m前':Math.round(s/3600)+'h前'};
-const TL={market_data:['数据采集','p-md'],ai_infer:['AI 推理','p-ai'],signal_verify:['信号验证','p-sv'],market:['数据市场','p-md']};
-const KIND={oracle_price:'预言机喂价',ai_signal:'AI 信号',prediction:'预测裁定',market_sale:'市场成交'};
-const TIERC={'金':'#fbbf24','银':'#cbd5e1','铜':'#b4886b'};
+const ago=t=>T().ago((Date.now()-t)/1000);
+const TIERC={gold:'#fbbf24',silver:'#cbd5e1',bronze:'#b4886b'};
+const TYPEC={market_data:'p-md',ai_infer:'p-ai',signal_verify:'p-sv',market:'p-md'};
+function applyLang(){
+  document.documentElement.lang=LANG==='zh'?'zh-CN':'en';
+  document.querySelectorAll('[data-k]').forEach(el=>{el.textContent=T()[el.dataset.k]});
+  $('foot').textContent=T().foot;
+  $('langBtn').textContent=LANG==='zh'?'EN':'中文';
+  for(const [id,key] of [['thNodes','thNodes'],['thSigs','thSigs'],['thPreds','thPreds'],['thOracle','thOracle'],['thMarket','thMarket']])
+    $(id).innerHTML=T()[key].map(h=>`<th>${h}</th>`).join('');
+}
+function toggleLang(){
+  LANG=LANG==='zh'?'en':'zh';
+  try{localStorage.setItem('lgai_dash_lang',LANG)}catch(e){}
+  applyLang();refresh();
+}
+const empty=(cols,msg)=>`<tr><td colspan="${cols}" class="empty">${msg}</td></tr>`;
 async function refresh(){
+  const t=T();
   try{
     const d=await (await fetch('/api/stats')).json();
     $('net').textContent=d.network+' v'+d.version;
@@ -166,68 +228,73 @@ async function refresh(){
     $('nodes').innerHTML=d.nodes.length?d.nodes.map(n=>`<tr>
       <td>${esc(n.name)} <span class="mono" style="color:var(--dim);font-size:10px">${n.id}</span></td>
       <td>${esc(n.platform)}/${esc(n.arch)}</td>
-      <td><span class="pill ${n.online?'p-on':'p-off'}">${n.online?'在线':'离线'}</span></td>
-      <td style="color:${TIERC[n.tier]||'var(--dim)'};font-weight:800">${n.tier||'铜'}</td>
+      <td><span class="pill ${n.online?'p-on':'p-off'}">${n.online?t.online:t.offline}</span></td>
+      <td style="color:${TIERC[n.tier]||'var(--dim)'};font-weight:800">${t.tiers[n.tier]||n.tier||'—'}</td>
       <td>${n.metrics&&n.metrics.load!=null?n.metrics.load+' / '+n.metrics.memPct+'%':'—'}</td>
       <td style="color:#fbbf24;font-weight:800">${n.points}</td>
       <td>${n.tasksDone}</td><td>${n.strikes||0}</td>
       <td>${ago(n.lastSeen)}</td></tr>`).join('')
-      :'<tr><td colspan="9" class="empty">等待节点接入…</td></tr>';
-    $('oracle').innerHTML=(d.oracle&&d.oracle.length)?d.oracle.map(f=>`<tr>
-      <td>${esc(f.symbol)}</td>
-      <td class="mono" style="color:#60a5fa;font-weight:800">${f.price}</td>
-      <td>${/mock/.test(f.source||'')?'<span class="pill p-open">⚠ MOCK 模拟</span>':`<span class="pill p-on">${esc(f.source||'—')}</span>`}</td>
-      <td class="mono">${f.deviationPct}%</td>
-      <td>${f.contributors}</td>
-      <td class="mono" style="color:var(--dim);font-size:10.5px">${esc((f.proof||'').slice(0,18))}…</td></tr>`).join('')
-      :'<tr><td colspan="6" class="empty">暂无喂价</td></tr>';
-    $('archive').innerHTML=(d.archive&&d.archive.length)?d.archive.map(r=>`<div class="feed-row">
-      <span><span class="mono" style="color:var(--dim)">#${r.seq}</span> <span class="who">${KIND[r.kind]||r.kind}</span> ${esc(r.data&&r.data.symbol||'')}</span>
-      <span class="mono" style="color:#34d399;font-size:10.5px">${esc(r.txid.slice(0,16))}…</span>
-      <span class="t mono">${ago(r.ts)}</span></div>`).join('')
-      :'<div class="empty">暂无存证</div>';
-    $('listings').innerHTML=(d.market&&d.market.listings.length)?d.market.listings.map(l=>`<tr>
-      <td>${esc(l.title)}</td>
-      <td>${l.kind==='dataset'?'数据集':'信号流'}</td>
-      <td>${l.size}</td>
-      <td style="color:#fbbf24;font-weight:800">${l.price} 分</td></tr>`).join('')
-      :'<tr><td colspan="4" class="empty">暂无商品</td></tr>';
-    $('sales').innerHTML=(d.market&&d.market.sales.length)?d.market.sales.map(s=>`<div class="feed-row">
-      <span><span class="who">${esc(s.name)}</span> 购入 ${esc(s.title)}</span>
-      <span class="pts">-${s.price}</span>
-      <span class="t mono">${ago(s.ts)}</span></div>`).join(''):'';
+      :empty(9,t.eNodes);
     $('sigs').innerHTML=(d.signals&&d.signals.length)?d.signals.map(s=>{
       const f=s.features||{};
       const col=s.score>0.15?'#34d399':s.score<-0.15?'#f87171':'var(--dim)';
+      const reg=t.regimes[s.regime]||s.regime||'—';
       return `<tr>
       <td>${esc(s.symbol)}</td>
       <td class="mono" style="color:${col};font-weight:800">${s.score>0?'+':''}${s.score}</td>
-      <td><span class="pill ${/多头|吸筹/.test(s.regime||'')?'p-win':/出货|派发/.test(s.regime||'')?'p-loss':'p-open'}">${esc(s.regime||'—')}</span></td>
+      <td><span class="pill ${/Long|Accumulation/.test(s.regime||'')?'p-win':/Short|Distribution/.test(s.regime||'')?'p-loss':'p-open'}">${esc(reg)}</span></td>
       <td class="mono">${f.bulldozer!=null?f.bulldozer:'—'}</td>
       <td class="mono">${f.accum!=null?f.accum:'—'}</td>
       <td class="mono">${f.distrib!=null?f.distrib:'—'}</td>
       <td class="mono">${f.rsi!=null?f.rsi:'—'}</td>
       <td>${esc(s.name||String(s.nodeId||'').slice(0,8))}</td>
       <td>${ago(s.ts)}</td></tr>`;
-    }).join(''):'<tr><td colspan="9" class="empty">暂无推理信号</td></tr>';
-    $('preds').innerHTML=d.predictions.length?d.predictions.map(p=>`<tr>
+    }).join(''):empty(9,t.eSigs);
+    $('preds').innerHTML=d.predictions.length?d.predictions.map(p=>{
+      let basis=p.basis||'—';
+      if(LANG==='zh')for(const [en,zh] of Object.entries(t.regimes))basis=basis.replace(en,zh);
+      return `<tr>
       <td>${esc(p.symbol)}</td>
       <td style="color:${p.dir==='LONG'?'#34d399':'#f87171'};font-weight:800">${p.dir}</td>
-      <td style="font-size:11.5px">${esc(p.basis||'—')}</td>
+      <td style="font-size:11.5px">${esc(basis)}</td>
       <td class="mono">${p.price0}</td>
       <td class="mono">${p.price1!=null?p.price1:'—'}</td>
-      <td><span class="pill ${p.status==='win'?'p-win':p.status==='loss'?'p-loss':'p-open'}">${{win:'WIN ✓',loss:'LOSS ✗',open:'进行中',verifying:'验证中'}[p.status]||p.status}</span></td>
-      <td>${ago(p.createdAt)}</td></tr>`).join('')
-      :'<tr><td colspan="7" class="empty">暂无预测</td></tr>';
+      <td><span class="pill ${p.status==='win'?'p-win':p.status==='loss'?'p-loss':'p-open'}">${t.status[p.status]||p.status}</span></td>
+      <td>${ago(p.createdAt)}</td></tr>`;
+    }).join(''):empty(7,t.ePreds);
+    $('oracle').innerHTML=(d.oracle&&d.oracle.length)?d.oracle.map(f=>`<tr>
+      <td>${esc(f.symbol)}</td>
+      <td class="mono" style="color:#60a5fa;font-weight:800">${f.price}</td>
+      <td>${/mock/.test(f.source||'')?`<span class="pill p-open">${t.mock}</span>`:`<span class="pill p-on">${esc(f.source||'—')}</span>`}</td>
+      <td class="mono">${f.deviationPct}%</td>
+      <td>${f.contributors}</td>
+      <td class="mono" style="color:var(--dim);font-size:10.5px">${esc((f.proof||'').slice(0,18))}…</td></tr>`).join('')
+      :empty(6,t.eOracle);
+    $('archive').innerHTML=(d.archive&&d.archive.length)?d.archive.map(r=>`<div class="feed-row">
+      <span><span class="mono" style="color:var(--dim)">#${r.seq}</span> <span class="who">${t.kinds[r.kind]||r.kind}</span> ${esc(r.data&&r.data.symbol||'')}</span>
+      <span class="mono" style="color:#34d399;font-size:10.5px">${esc(r.txid.slice(0,16))}…</span>
+      <span class="t mono">${ago(r.ts)}</span></div>`).join('')
+      :`<div class="empty">${t.eArchive}</div>`;
+    $('listings').innerHTML=(d.market&&d.market.listings.length)?d.market.listings.map(l=>`<tr>
+      <td>${esc(l.title)}</td>
+      <td>${l.kind==='dataset'?t.dataset:t.sigfeed}</td>
+      <td>${l.size}</td>
+      <td style="color:#fbbf24;font-weight:800">${l.price} ${t.pts}</td></tr>`).join('')
+      :empty(4,t.eMarket);
+    $('sales').innerHTML=(d.market&&d.market.sales.length)?d.market.sales.map(s=>`<div class="feed-row">
+      <span><span class="who">${esc(s.name)}</span> ${t.bought} ${esc(s.title)}</span>
+      <span class="pts">-${s.price}</span>
+      <span class="t mono">${ago(s.ts)}</span></div>`).join(''):'';
     $('ledger').innerHTML=d.ledger.length?d.ledger.map(l=>{
-      const [label,cls]=TL[l.type]||[l.type,''];
+      const label=t.types[l.type]||l.type;
       return `<div class="feed-row">
-        <span><span class="who">${esc(l.name)}</span> <span class="${cls}">${label}</span> ${esc(l.symbol||'')} <span style="color:var(--dim)">${esc(l.note||'')}</span></span>
-        <span class="pts ${l.points?'':'zero'}">${l.points?'+'+l.points:'0'}</span>
+        <span><span class="who">${esc(l.name)}</span> <span class="${TYPEC[l.type]||''}">${label}</span> ${esc(l.symbol||'')} <span style="color:var(--dim)">${esc(l.note||'')}</span></span>
+        <span class="pts ${l.points>0?'':'zero'}">${l.points>0?'+'+l.points:l.points||0}</span>
         <span class="t mono">${ago(l.ts)}</span></div>`;
-    }).join(''):'<div class="empty">暂无记录</div>';
-  }catch(e){ $('net').textContent='连接中断…'; }
+    }).join(''):`<div class="empty">${t.eLedger}</div>`;
+  }catch(e){ $('net').textContent=T().offline_net; }
 }
+applyLang();
 refresh();setInterval(refresh,3000);
 </script>
 </body>

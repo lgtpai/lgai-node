@@ -24,15 +24,15 @@ const flag = n => args.includes(n);
 const opt = (n, d) => { const i = args.indexOf(n); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
 if (flag('--help') || flag('-h')) {
   console.log(`LGAI Node v${VERSION}
-用法: node lgai-node.js [选项]
-  --coordinator, -c <url>  协调端地址 (默认 $LGAI_COORDINATOR 或 http://127.0.0.1:18402)
-  --name <name>            节点名称 (默认主机名)
-  --mock                   使用模拟行情数据源（离线/测试）
-  --once                   跑一轮任务后退出（自检用）
-  --market                 查看 AI 数据市场商品后退出
-  --buy <listingId>        用积分购买数据集/信号流后退出
-  --intel <symbol>         拉取 Agent 协作情报（预言机+信号+预测）后退出
-  --help                   显示帮助`);
+Usage: node lgai-node.js [options]
+  --coordinator, -c <url>  coordinator URL (default $LGAI_COORDINATOR or http://127.0.0.1:18402)
+  --name <name>            node name (default: hostname)
+  --mock                   use mock market data source (offline/testing)
+  --once                   run one task cycle then exit (self-check)
+  --market                 list AI data marketplace items, then exit
+  --buy <listingId>        buy a dataset/signal feed with points, then exit
+  --intel <symbol>         fetch agent intel (oracle + signal + predictions), then exit
+  --help                   show this help`);
   process.exit(0);
 }
 const COORD = (opt('--coordinator', opt('-c', process.env.LGAI_COORDINATOR || 'http://127.0.0.1:18402'))).replace(/\/+$/, '');
@@ -112,7 +112,7 @@ async function getCandles(symbol, limit = 40, interval = '5m') {
     const k = await fetchJson(`https://www.okx.com/api/v5/market/candles?instId=${toOkx(symbol)}&bar=${interval}&limit=${limit}`);
     return { candles: k.data.map(r => ({ c: +r[4], h: +r[2], l: +r[3], v: +r[5] })).reverse(), source: 'okx' };
   } catch { }
-  throw new Error('所有行情数据源均不可用（可用 --mock 测试）');
+  throw new Error('all market data sources unavailable (use --mock for testing)');
 }
 async function getPrice(symbol) {
   const { candles, source } = await getCandles(symbol, 2, '1m');
@@ -205,10 +205,10 @@ function inferScore(candles) {
   score = +clamp(score, -1, 1).toFixed(4);
 
   const regime =
-    bulldozer >= 0.5 ? '推土机多头' :
-    bulldozer <= -0.5 ? '推土机出货' :
-    accum >= 0.5 && accum > distrib ? '庄家吸筹' :
-    distrib >= 0.5 ? '庄家派发' : '震荡';
+    bulldozer >= 0.5 ? 'Bulldozer Long' :
+    bulldozer <= -0.5 ? 'Bulldozer Short' :
+    accum >= 0.5 && accum > distrib ? 'Whale Accumulation' :
+    distrib >= 0.5 ? 'Whale Distribution' : 'Range';
 
   return {
     score, regime,
@@ -240,10 +240,10 @@ async function execTask(t) {
     const verdict = (t.payload.dir === 'LONG') === up ? 'WIN' : 'LOSS';
     return { price1, verdict };
   }
-  throw new Error('未知任务类型 ' + t.type);
+  throw new Error('unknown task type ' + t.type);
 }
 
-const TYPE_LABEL = { market_data: '数据采集', ai_infer: 'AI 推理', signal_verify: '信号验证' };
+const TYPE_LABEL = { market_data: 'Market Data', ai_infer: 'AI Inference', signal_verify: 'Signal Verify' };
 let done = 0, points = 0;
 
 async function pollOnce() {
@@ -280,8 +280,8 @@ async function heartbeat() {
 (async () => {
   console.log(bold(amber(`
    ██╗      ██████╗  █████╗ ██╗    LGAI Node v${VERSION}
-   ██║     ██╔════╝ ██╔══██╗██║    猎狗AI · Trusted Intelligence Network
-   ██║     ██║  ███╗███████║██║    ${MOCK ? '[MOCK 数据源]' : '[Binance→OKX 数据源]'}
+   ██║     ██╔════╝ ██╔══██╗██║    LGAI · Trusted Intelligence Network
+   ██║     ██║  ███╗███████║██║    ${MOCK ? '[MOCK data source]' : '[Binance→OKX live data]'}
    ███████╗╚██████╔╝██╔══██║██║
    ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝    coordinator: ${COORD}
 `)));
@@ -297,32 +297,32 @@ async function heartbeat() {
     cred = { nodeId: reg.nodeId, token: reg.token };
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(stateFile, JSON.stringify(cred), { mode: 0o600 });
-    log(green('✓'), `已注册加入 ${bold(reg.network)}，节点 ID ${bold(cred.nodeId.slice(0, 8))}`);
+    log(green('✓'), `Registered on ${bold(reg.network)}, node ID ${bold(cred.nodeId.slice(0, 8))}`);
   }
   // 凭据失效（如协调端重置）→ 自动重新注册
   async function withReauth(fn) {
     try { return await fn(); }
     catch (e) {
       if (!/^401/.test(String(e.message))) throw e;
-      log(amber('⟳'), '凭据失效（协调端可能已重置），自动重新注册…');
+      log(amber('⟳'), 'credentials invalid (coordinator may have been reset), re-registering…');
       await register();
       return await fn();
     }
   }
   if (!cred) await register();
-  else log(dim(`使用已保存凭据 ${cred.nodeId.slice(0, 8)} (${stateFile})`));
+  else log(dim(`using saved credentials ${cred.nodeId.slice(0, 8)} (${stateFile})`));
 
   // ---- 一次性命令：数据市场 / Agent 情报 ----
   if (flag('--market')) {
     const { listings, volume } = await api('/api/market/listings', { authd: false });
-    console.log(bold('AI 数据市场') + dim(`（累计成交 ${volume} 分）`));
-    for (const l of listings) console.log(`  ${amber(l.id.padEnd(14))} ${l.title}  ${dim(`规模 ${l.size}`)}  ${bold(l.price + ' 分')}`);
+    console.log(bold('AI Data Marketplace') + dim(` (total volume: ${volume} pts)`));
+    for (const l of listings) console.log(`  ${amber(l.id.padEnd(14))} ${l.title}  ${dim(`size ${l.size}`)}  ${bold(l.price + ' pts')}`);
     process.exit(0);
   }
   if (opt('--buy')) {
     const r = await api('/api/market/buy', { method: 'POST', body: { listingId: opt('--buy') } });
-    log(green('✓'), `已购入 ${bold(r.title)}，支付 ${r.price} 分，余额 ${bold(r.balance)}`);
-    log(dim(`存证 ${r.proof} · 数据 ${Array.isArray(r.data) ? r.data.length : 0} 条`));
+    log(green('✓'), `purchased ${bold(r.title)} for ${r.price} pts, balance ${bold(r.balance)}`);
+    log(dim(`proof ${r.proof} · ${Array.isArray(r.data) ? r.data.length : 0} records`));
     process.exit(0);
   }
   if (opt('--intel')) {
@@ -332,7 +332,7 @@ async function heartbeat() {
   }
 
   await withReauth(heartbeat);
-  log(green('✓'), `心跳正常 · 节点 ${bold(NAME)} (${os.platform()}/${os.arch()}, ${os.cpus().length} 核)`);
+  log(green('✓'), `heartbeat OK · node ${bold(NAME)} (${os.platform()}/${os.arch()}, ${os.cpus().length} cores)`);
 
   if (ONCE) {
     // 自检模式：轮询直到拿到并完成任务（含派生任务），随后退出
@@ -342,22 +342,22 @@ async function heartbeat() {
       idle = got ? 0 : idle + 1;
       await new Promise(r => setTimeout(r, 800));
     }
-    log(bold(`--once 完成：${done} 个任务`));
+    log(bold(`--once done: ${done} tasks completed`));
     process.exit(done > 0 ? 0 : 1);
   }
 
-  const hb = setInterval(() => withReauth(heartbeat).catch(e => log(red('心跳失败'), dim(e.message))), 30_000);
-  const poll = setInterval(() => withReauth(pollOnce).catch(e => log(red('任务轮询失败'), dim(e.message))), 8_000);
+  const hb = setInterval(() => withReauth(heartbeat).catch(e => log(red('heartbeat failed'), dim(e.message))), 30_000);
+  const poll = setInterval(() => withReauth(pollOnce).catch(e => log(red('task poll failed'), dim(e.message))), 8_000);
   const shutdown = () => {
     clearInterval(hb); clearInterval(poll);
-    log(`已退出 · 本次会话完成 ${bold(done)} 个任务`);
+    log(`stopped · ${bold(done)} tasks completed this session`);
     process.exit(0);
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
-  log(dim('开始工作：每 8s 领取任务，每 30s 心跳。Ctrl+C 退出。'));
+  log(dim('working: claiming tasks every 8s, heartbeat every 30s. Ctrl+C to exit.'));
 })().catch(e => {
-  console.error(red('启动失败:'), e.message || e);
-  console.error(dim('请确认协调端已启动且地址正确（--coordinator http://host:18402）'));
+  console.error(red('startup failed:'), e.message || e);
+  console.error(dim('make sure the coordinator is running and the URL is correct (--coordinator http://host:18402)'));
   process.exit(1);
 });
