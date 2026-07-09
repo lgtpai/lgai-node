@@ -1,85 +1,83 @@
-# LGAI Node — 跨平台节点程序（Phase 02: AI Agent Network）
+# LGAI Node — Cross-platform Node Client (Phase 02: AI Agent Network)
 
-猎狗AI (LGAI) 可信智能网络的节点客户端 + 轻量协调端。
-**零依赖**，任何装有 Node.js ≥ 18 的设备（树莓派 / Mac mini / PC / 服务器 / 云主机）直接运行，无需 `npm install`。
+**English** | [中文](README.zh-CN.md)
 
-## 快速开始
+Node client + lightweight coordinator for the LGAI Trusted Intelligence Network.
+**Zero dependencies** — any device with Node.js ≥ 18 (Raspberry Pi / Mac mini / PC / server / cloud) runs it directly, no `npm install` required.
+
+## Quick Start
 
 ```bash
-# 1. 启动协调端（部署在你的服务器上，默认端口 8402）
+# 1. Start the coordinator (deploy on your server, default port 8402)
 node coordinator/server.js
-# 仪表盘: http://localhost:8402
+# Dashboard: http://localhost:8402
 
-# 2. 任意设备启动节点
-node client/lgai-node.js --coordinator http://<服务器>:8402 --name my-pi
+# 2. Start a node on any device
+node client/lgai-node.js --coordinator http://<server>:8402 --name my-pi
 
-# 离线测试（模拟行情数据源）
+# Offline test (mock market data source)
 node client/lgai-node.js --mock
 
-# 自检（协调端 + mock 节点全闭环）
+# Self-check (coordinator + mock node, full closed loop)
 npm run smoke
 ```
 
-## 节点职能（对应官网四大角色）
+## Node Roles
 
-| 任务类型 | 角色 | 内容 | 积分 |
+| Task Type | Role | What it does | Points |
 |---|---|---|---|
-| `market_data` | 数据计算 | 拉取公开 OHLCV（Binance→OKX 自动降级），多节点交叉共识（偏离中位数 >0.5% 记违规） | 5 |
-| `ai_infer` | AI 推理 | **三大基础模型**（价量代理，口径对齐 README_signals）：🚜推土机趋势（近窗单边占比≥70% 定方向 + 结构锚）、🧲庄家吸筹（低位放量+收盘贴上沿+低点抬高）、📉庄家出货（高位下跌K放量+收盘贴下沿+高点下移），扩展动量/RSI/波动率 → 综合评分 [-1,1] + 形态标签 | 8 |
-| `signal_verify` | 信号验证 | 独立复核网络预测到期后的实际结果，多数一致才计分 | 10 |
-| — | 智能贡献 | 所有有效贡献记入账本（Contribution Proof 雏形） | — |
+| `market_data` | Data Compute | Fetch public OHLCV (Binance → OKX fallback); multi-node cross consensus — deviating >0.5% from the median is a strike | 5 |
+| `ai_infer` | AI Inference | **Three base models** (price-volume proxies): 🚜 Bulldozer Trend (≥70% one-directional closes set the direction + structural anchor), 🧲 Whale Accumulation (low zone + rising volume + closes near candle highs + higher lows), 📉 Whale Distribution (high zone + heavy volume on down candles + closes near lows + lower highs) — extended with momentum / RSI / volatility into a composite score [-1, 1] + regime label | 8 |
+| `signal_verify` | Signal Verification | Independently verify matured network predictions; only majority-consistent verdicts earn points | 10 |
+| — | Intelligence Contribution | Every valid contribution is written to the ledger (Contribution Proof prototype) | — |
 
-## 闭环流程
+## The Closed Loop
 
 ```
-节点采集行情 → 协调端共识定价 → 生成网络预测(动量方向, 15min 时限)
-     → 到期派发验证任务 → 多节点投票裁定 WIN/LOSS → 胜率统计 + 积分发放
+Nodes collect data → Coordinator consensus pricing → Network predictions (model-driven, 15min horizon)
+     → Verification tasks on expiry → Multi-node vote WIN/LOSS → Accuracy stats + points issued
 ```
 
-## 协调端配置（环境变量）
+## Five Protocol Dimensions
 
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `PORT` | 8402 | 监听端口 |
-| `SYMBOLS` | BTCUSDT,ETHUSDT,SOLUSDT | 任务币种 |
-| `TICK_MS` | 45000 | 任务生成周期 |
-| `HORIZON_MIN` | 15 | 预测验证时限（分钟） |
-| `DATA_DIR` | coordinator/data | 状态持久化目录（已 gitignore） |
-
-## 五大协议维度（与官网协议栈对应）
-
-| 维度 | 实现 |
+| Dimension | Implementation |
 |---|---|
-| 🗄 去中心化存储 | 喂价/信号/预测裁定/市场成交全部写入 **SHA-256 哈希链存证**（`prevHash` 链式防篡改，mock `ar://` txid），Arweave 上链适配预留 |
-| 🔮 去中心化预言机 | 多节点独立采集 → 中位数共识 → 偏离 >0.5% 记违规；`GET /api/oracle/price?symbol=X` 对外喂价（含贡献节点数/最大偏差/存证证明） |
-| 🤝 AI Agent 网络 | `ai_infer` 冗余派发至多节点 → **集成推理**（评分取中位数、形态取多数）；`GET /api/agent/intel?symbol=X` 供外部智能体一键拉取全维度情报 |
-| 🛒 AI 数据市场 | 共识行情数据集 / AI 信号流上架流通，积分结算，成交上链存证；`--market` 看货、`--buy <id>` 购买 |
-| 💎 智能贡献激励 | 声誉分级：铜 ×1.0 / 银 ×1.2（≥100 分且违规率<15%）/ 金 ×1.5（≥300 分且违规率<5%），以贡献质量而非算力定酬 |
+| 🗄 Decentralized Storage | Price feeds / signals / prediction verdicts / market sales all written to a **SHA-256 hash chain** (`prevHash`-linked, tamper-evident, mock `ar://` txids); Arweave settlement adapter reserved |
+| 🔮 Decentralized Oracle | Independent multi-node collection → median consensus → >0.5% deviation slashed; `GET /api/oracle/price?symbol=X` serves feeds with contributor count / max deviation / archive proof |
+| 🤝 AI Agent Network | `ai_infer` fanned out to multiple nodes → **ensemble inference** (median score, majority regime); `GET /api/agent/intel?symbol=X` gives any external agent full intelligence in one call |
+| 🛒 AI Data Marketplace | Consensus datasets / AI signal feeds listed for point-settled trading with on-chain sale proofs; `--market` to browse, `--buy <id>` to purchase |
+| 💎 Contribution Incentives | Reputation tiers: Bronze ×1.0 / Silver ×1.2 (≥100 pts, strike rate <15%) / Gold ×1.5 (≥300 pts, strike rate <5%) — rewards by contribution quality, not hashpower |
 
-## 协议（HTTP JSON）
+## Coordinator Configuration (env vars)
 
-节点接口（鉴权 `x-node-id` + `x-node-token`）：
-- `POST /api/register` → `{nodeId, token}`（凭据保存在 `~/.lgai/`）
-- `POST /api/heartbeat` — 30s 心跳，带负载/内存指标
-- `GET  /api/tasks` — 领取任务（租约 5min，超时重新派发）
-- `POST /api/result` — 提交结果，凑齐冗余份数后共识裁定
-- `POST /api/market/buy` — 数据市场购买（积分结算）
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | 8402 | Listen port |
+| `SYMBOLS` | BTCUSDT,ETHUSDT,SOLUSDT | Task symbols |
+| `TICK_MS` | 45000 | Task generation interval |
+| `HORIZON_MIN` | 15 | Prediction verification horizon (minutes) |
+| `DATA_DIR` | coordinator/data | State persistence dir (gitignored) |
 
-公开接口（预言机/存证/Agent 协作/市场）：
-- `GET /api/oracle` · `GET /api/oracle/price?symbol=X` — 共识喂价
-- `GET /api/archive` — 哈希链存证（链高 + 最近 50 条）
-- `GET /api/agent/intel?symbol=X` — 喂价 + 最新集成信号 + 预测 + 网络胜率
-- `GET /api/market/listings` — 市场商品与成交
-- `GET /api/stats` — 仪表盘数据（无敏感字段）
+## Protocol (HTTP JSON)
 
-## 与 crypto_quant 主仓库的关系
+Node endpoints (auth via `x-node-id` + `x-node-token` headers):
+- `POST /api/register` → `{nodeId, token}` (credentials stored in `~/.lgai/`)
+- `POST /api/heartbeat` — 30s heartbeat with load/memory metrics
+- `GET  /api/tasks` — claim tasks (5min lease, re-dispatched on timeout)
+- `POST /api/result` — submit results; consensus finalizes once redundancy is met
+- `POST /api/market/buy` — marketplace purchase (point-settled)
 
-独立组件，不 import 主仓库代码、不触碰 webhook_receiver / 实盘执行路径。
-后续可将 `data/lgai.db` 的预测信号接入协调端替代自产动量预测（Phase 03）。
+Public endpoints (oracle / archive / agent collaboration / marketplace):
+- `GET /api/oracle` · `GET /api/oracle/price?symbol=X` — consensus price feeds
+- `GET /api/archive` — hash-chain archive (chain height + latest 50 records)
+- `GET /api/agent/intel?symbol=X` — feed + latest ensemble signal + predictions + network accuracy
+- `GET /api/market/listings` — marketplace listings and sales
+- `GET /api/stats` — dashboard data (no sensitive fields)
 
-## Roadmap 内待办（MVP 之外）
+## Beyond the MVP
 
-- 单二进制打包（`node --experimental-sea` 或 pkg），systemd/launchd 安装脚本
-- 结果签名（节点私钥）→ 贡献证明上链（Arweave）
-- 任务级 stake/slash，替代简单 strike 计数
-- 协调端多实例 + sqlite 持久化（当前 JSON 文件适用于 ≤几百节点）
+- Single-binary packaging (`node --experimental-sea` or pkg), systemd/launchd install scripts
+- Result signing (node private keys) → contribution proofs settled to Arweave
+- Task-level stake/slash replacing simple strike counting
+- Multi-instance coordinator + sqlite persistence (current JSON files suit ≤ a few hundred nodes)
+- Ingesting proprietary prediction feeds to replace self-generated momentum predictions (Phase 03)
