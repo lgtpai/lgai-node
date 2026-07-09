@@ -285,7 +285,7 @@ async function heartbeat() {
    ███████╗╚██████╔╝██╔══██║██║
    ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝    coordinator: ${COORD}
 `)));
-  if (!cred) {
+  async function register() {
     const reg = await api('/api/register', {
       method: 'POST', authd: false,
       body: {
@@ -298,9 +298,19 @@ async function heartbeat() {
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(stateFile, JSON.stringify(cred), { mode: 0o600 });
     log(green('✓'), `已注册加入 ${bold(reg.network)}，节点 ID ${bold(cred.nodeId.slice(0, 8))}`);
-  } else {
-    log(dim(`使用已保存凭据 ${cred.nodeId.slice(0, 8)} (${stateFile})`));
   }
+  // 凭据失效（如协调端重置）→ 自动重新注册
+  async function withReauth(fn) {
+    try { return await fn(); }
+    catch (e) {
+      if (!/^401/.test(String(e.message))) throw e;
+      log(amber('⟳'), '凭据失效（协调端可能已重置），自动重新注册…');
+      await register();
+      return await fn();
+    }
+  }
+  if (!cred) await register();
+  else log(dim(`使用已保存凭据 ${cred.nodeId.slice(0, 8)} (${stateFile})`));
 
   // ---- 一次性命令：数据市场 / Agent 情报 ----
   if (flag('--market')) {
@@ -321,7 +331,7 @@ async function heartbeat() {
     process.exit(0);
   }
 
-  await heartbeat();
+  await withReauth(heartbeat);
   log(green('✓'), `心跳正常 · 节点 ${bold(NAME)} (${os.platform()}/${os.arch()}, ${os.cpus().length} 核)`);
 
   if (ONCE) {
@@ -336,8 +346,8 @@ async function heartbeat() {
     process.exit(done > 0 ? 0 : 1);
   }
 
-  const hb = setInterval(() => heartbeat().catch(e => log(red('心跳失败'), dim(e.message))), 30_000);
-  const poll = setInterval(() => pollOnce().catch(e => log(red('任务轮询失败'), dim(e.message))), 8_000);
+  const hb = setInterval(() => withReauth(heartbeat).catch(e => log(red('心跳失败'), dim(e.message))), 30_000);
+  const poll = setInterval(() => withReauth(pollOnce).catch(e => log(red('任务轮询失败'), dim(e.message))), 8_000);
   const shutdown = () => {
     clearInterval(hb); clearInterval(poll);
     log(`已退出 · 本次会话完成 ${bold(done)} 个任务`);
