@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.2.1';
+const VERSION = '0.2.2';
 const PORT = +(process.env.PORT || 18402);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const TICK_MS = +(process.env.TICK_MS || 45_000);       // task generation interval
@@ -333,11 +333,21 @@ function auth(req) {
 const DASHBOARD = fs.readFileSync(path.join(__dirname, 'dashboard.html'), 'utf8');
 
 // ---- AI data marketplace: datasets & signal feeds, point-settled ----
+// LGAI weighting: items backed by a live proprietary push trend carry a premium (×1.5);
+// the raw push trend feed itself is a top-tier exclusive item (×2.0 base).
+function lgaiWeightOf(sym) {
+  const g = S.lgai[sym];
+  return g && g.dir ? 1.5 : 1.0;
+}
 function listings() {
   const ls = [];
   for (const sym of SYMBOLS) {
-    ls.push({ id: 'ds-' + sym, kind: 'dataset', symbol: sym, title: `${sym} consensus OHLCV dataset`, price: 50, size: (S.marketHistory[sym] || []).length });
-    ls.push({ id: 'sig-' + sym, kind: 'signal', symbol: sym, title: `${sym} AI signal feed`, price: 30, size: S.signals.filter(s => s.symbol === sym).length });
+    const w = lgaiWeightOf(sym);
+    ls.push({ id: 'ds-' + sym, kind: 'dataset', symbol: sym, title: `${sym} consensus OHLCV dataset`, price: Math.round(50 * w), lgaiWeight: w, size: (S.marketHistory[sym] || []).length });
+    ls.push({ id: 'sig-' + sym, kind: 'signal', symbol: sym, title: `${sym} AI signal feed`, price: Math.round(30 * w), lgaiWeight: w, size: S.signals.filter(s => s.symbol === sym).length });
+    if (S.lgai[sym]) {
+      ls.push({ id: 'lgai-' + sym, kind: 'lgai', symbol: sym, title: `${sym} LGAI push trend feed (proprietary)`, price: 80, lgaiWeight: 2.0, size: S.lgai[sym].pushes });
+    }
   }
   return ls;
 }
@@ -527,9 +537,18 @@ const server = http.createServer(async (req, res) => {
       S.stats.marketVolume = (S.stats.marketVolume || 0) + item.price;
       S.ledger.unshift({ ts: now(), nodeId: node.id, name: node.name, taskId: rec.txid, type: 'market', symbol: item.symbol, points: -item.price, note: `purchase: ${item.title}` });
       S.ledger = S.ledger.slice(0, 400);
-      const data = item.kind === 'dataset'
-        ? (S.marketHistory[item.symbol] || []).slice(-100)
-        : S.signals.filter(s => s.symbol === item.symbol).slice(0, 10);
+      let data;
+      if (item.kind === 'dataset') data = (S.marketHistory[item.symbol] || []).slice(-100);
+      else if (item.kind === 'lgai') {
+        // exclusive: trend snapshot + raw recent pushes, read live from the push db
+        let pushes = [];
+        try {
+          pushes = lgaiDb ? lgaiDb.prepare('SELECT price, time FROM newcoins WHERE token = ? ORDER BY time DESC LIMIT 15')
+            .all(item.symbol.replace(/USDT$/, '')).map(r => ({ price: +r.price, time: r.time })) : [];
+        } catch { }
+        data = { trend: S.lgai[item.symbol] || null, pushes };
+      }
+      else data = S.signals.filter(s => s.symbol === item.symbol).slice(0, 10);
       save();
       return send(res, 200, { ok: true, proof: rec.txid, title: item.title, price: item.price, balance: node.points, data });
     }

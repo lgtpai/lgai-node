@@ -194,7 +194,8 @@ en:{
   thSigs:['Pair','Score','Regime','🚜 Bulldozer','🧲 Accum','📉 Distrib','RSI','Node','Time','Rate'],
   thPreds:['Pair','Direction','Basis','Entry','Exit','Status','Time','Your Call'],
   thOracle:['Pair','Consensus','Source','Deviation','Nodes','Proof'],
-  thMarket:['Item','Type','Size','Price'],
+  thMarket:['Item','Type','LGAI Weight','Size','Price'],
+  kindLgai:'LGAI exclusive',
   online:'Online',offline:'Offline',
   tiers:{gold:'Gold',silver:'Silver',bronze:'Bronze'},
   types:{market_data:'Data',ai_infer:'AI Inference',signal_verify:'Verify',market:'Marketplace'},
@@ -226,7 +227,8 @@ zh:{
   thSigs:['交易对','综合评分','形态','🚜 推土机','🧲 吸筹','📉 出货','RSI','节点','时间','评价'],
   thPreds:['交易对','方向','依据','入场价','出场价','状态','时间','你的判断'],
   thOracle:['交易对','共识价','数据源','偏差','节点数','存证'],
-  thMarket:['商品','类型','规模','价格'],
+  thMarket:['商品','类型','LGAI 权重','规模','价格'],
+  kindLgai:'LGAI 独家',
   online:'在线',offline:'离线',
   tiers:{gold:'金',silver:'银',bronze:'铜'},
   types:{market_data:'数据采集',ai_infer:'AI 推理',signal_verify:'信号验证',market:'数据市场'},
@@ -387,10 +389,11 @@ async function refresh(){
       :`<div class="empty">${t.eArchive}</div>`;
     $('listings').innerHTML=(d.market&&d.market.listings.length)?d.market.listings.map(l=>`<tr>
       <td>${esc(l.title)}</td>
-      <td>${l.kind==='dataset'?t.dataset:t.sigfeed}</td>
+      <td>${l.kind==='dataset'?t.dataset:l.kind==='lgai'?`<span class="pill p-open">${t.kindLgai}</span>`:t.sigfeed}</td>
+      <td class="mono" style="color:${(l.lgaiWeight||1)>1?'#fbbf24':'var(--dim)'};font-weight:800">×${(l.lgaiWeight||1).toFixed(1)}</td>
       <td>${l.size}</td>
       <td style="color:#fbbf24;font-weight:800">${l.price} ${t.pts}</td></tr>`).join('')
-      :empty(4,t.eMarket);
+      :empty(5,t.eMarket);
     $('sales').innerHTML=(d.market&&d.market.sales.length)?d.market.sales.map(s=>`<div class="feed-row">
       <span><span class="who">${esc(s.name)}</span> ${t.bought} ${esc(s.title)}</span>
       <span class="pts">-${s.price}</span>

@@ -131,7 +131,22 @@ try {
   const lp = s3.predictions.find(p => (p.basis || '').startsWith('LGAI push'));
   if (!lp) fail('no prediction based on LGAI push data');
   if (lp.dir !== 'LONG') fail('LGAI-based prediction direction wrong');
-  console.log(`8/8 LGAI push -> prediction ok · ${gb.symbol} ${gb.dir} ${Math.round(gb.upRatio * 100)}%↑ · basis "${lp.basis}"`);
+  // marketplace LGAI weighting: premium pricing + exclusive push trend item
+  const mkt = s3.market.listings;
+  const dsB = mkt.find(l => l.id === 'ds-BTCUSDT');
+  if (!dsB || dsB.lgaiWeight !== 1.5 || dsB.price !== 75) fail('dataset LGAI weight/pricing wrong: ' + JSON.stringify(dsB));
+  const lgB = mkt.find(l => l.id === 'lgai-BTCUSDT');
+  if (!lgB || lgB.lgaiWeight !== 2.0 || lgB.price !== 80) fail('LGAI exclusive listing missing/wrong');
+  const buyLgai = await new Promise(resolve => {
+    const cli = spawn(process.execPath, [path.join(root, 'client/lgai-node.js'),
+      '-c', BASE, '--mock', '--buy', 'lgai-BTCUSDT', '--name', 'smoke-node'], {
+      env: { ...process.env, HOME: tmp, USERPROFILE: tmp },
+      stdio: ['ignore', 'ignore', 'inherit'],
+    });
+    cli.on('exit', resolve);
+  });
+  if (buyLgai !== 0) fail('LGAI exclusive purchase failed');
+  console.log(`8/8 LGAI push -> prediction ok · ${gb.symbol} ${gb.dir} ${Math.round(gb.upRatio * 100)}%↑ · basis "${lp.basis}" · market weight ×1.5/×2.0 ok`);
   console.log('\nSMOKE PASS ✓');
   process.exit(0);
 } catch (e) {
