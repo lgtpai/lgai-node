@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.2.2';
+const VERSION = '0.3.0';
 const PORT = +(process.env.PORT || 18402);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const TICK_MS = +(process.env.TICK_MS || 45_000);       // task generation interval
@@ -144,6 +144,51 @@ function refreshLgaiPush() {
       };
     } catch { /* token missing or schema mismatch: skip */ }
   }
+  // Full-market scan across every pushed project (throttled to every 5 minutes)
+  if (now() - lgaiAll.updated > 5 * 60_000) refreshLgaiAll();
+}
+
+// Full-market bulldozer scan: every project in the push database, breadth + top movers
+let lgaiAll = { total: 0, fresh: 0, long: 0, short: 0, mixed: 0, topLong: [], topShort: [], updated: 0 };
+function refreshLgaiAll() {
+  if (!lgaiDb) return;
+  try {
+    const rows = lgaiDb.prepare(`SELECT token, price, time FROM (
+        SELECT token, price, time, ROW_NUMBER() OVER (PARTITION BY token ORDER BY time DESC) rn FROM newcoins
+      ) WHERE rn <= 15 ORDER BY token, time`).all();
+    const byTok = new Map();
+    for (const r of rows) {
+      if (!byTok.has(r.token)) byTok.set(r.token, []);
+      byTok.get(r.token).push(r);
+    }
+    const cutoff = now() - 72 * 3600_000; // rank only projects pushed within 72h
+    const trends = [];
+    for (const [token, arr] of byTok) {
+      if (arr.length < 5) continue;
+      let ups = 0;
+      for (let i = 1; i < arr.length; i++) if (+arr[i].price > +arr[i - 1].price) ups++;
+      const upRatio = ups / (arr.length - 1);
+      const last = arr[arr.length - 1];
+      const lastTs = Date.parse(String(last.time).replace(' ', 'T'));
+      trends.push({
+        token, dir: upRatio >= 0.7 ? 'LONG' : upRatio <= 0.3 ? 'SHORT' : null,
+        upRatio: +upRatio.toFixed(2), pushes: arr.length,
+        lastPush: last.time, lastPrice: +last.price,
+        fresh: !Number.isFinite(lastTs) || lastTs >= cutoff,
+      });
+    }
+    const fr = trends.filter(t => t.fresh);
+    lgaiAll = {
+      total: trends.length, fresh: fr.length,
+      long: fr.filter(t => t.dir === 'LONG').length,
+      short: fr.filter(t => t.dir === 'SHORT').length,
+      mixed: fr.filter(t => !t.dir).length,
+      topLong: fr.filter(t => t.dir === 'LONG').sort((a, b) => b.upRatio - a.upRatio || b.pushes - a.pushes).slice(0, 10),
+      topShort: fr.filter(t => t.dir === 'SHORT').sort((a, b) => a.upRatio - b.upRatio || b.pushes - a.pushes).slice(0, 10),
+      updated: now(),
+    };
+    log(`[lgai] full scan: ${lgaiAll.total} projects (${lgaiAll.fresh} fresh) · LONG ${lgaiAll.long} / SHORT ${lgaiAll.short} / range ${lgaiAll.mixed}`);
+  } catch (e) { log('[lgai] full scan failed: ' + e.message); }
 }
 
 function maybeCreatePrediction(symbol) {
@@ -349,6 +394,9 @@ function listings() {
       ls.push({ id: 'lgai-' + sym, kind: 'lgai', symbol: sym, title: `${sym} LGAI push trend feed (proprietary)`, price: 80, lgaiWeight: 2.0, size: S.lgai[sym].pushes });
     }
   }
+  if (lgaiAll.total) {
+    ls.push({ id: 'lgai-scan', kind: 'lgai', symbol: 'ALL', title: `LGAI full-market push scan (${lgaiAll.total} projects, breadth + top movers)`, price: 120, lgaiWeight: 2.0, size: lgaiAll.total });
+  }
   return ls;
 }
 
@@ -387,6 +435,7 @@ const server = http.createServer(async (req, res) => {
         symbol: sym,
         oracle: S.oracle[sym] || null,
         lgaiPush: S.lgai[sym] || null,
+        lgaiBreadth: lgaiAll.total ? { total: lgaiAll.total, fresh: lgaiAll.fresh, long: lgaiAll.long, short: lgaiAll.short, mixed: lgaiAll.mixed } : null,
         signal: S.signals.find(s => s.symbol === sym) || null,
         predictions: S.predictions.filter(p => p.symbol === sym).slice(0, 5),
         accuracy: S.stats.wins + S.stats.losses ? +(S.stats.wins / (S.stats.wins + S.stats.losses) * 100).toFixed(1) : null,
@@ -423,6 +472,7 @@ const server = http.createServer(async (req, res) => {
         })),
         oracle: Object.values(S.oracle),
         lgai: Object.values(S.lgai),
+        lgaiAll,
         chain: S.chain, archive: S.archive.slice(0, 10),
         market: { listings: listings(), sales: S.market.sales.slice(0, 8), volume: S.stats.marketVolume || 0 },
         symbols: Object.fromEntries(SYMBOLS.map(s => [s, (S.marketHistory[s] || []).slice(-1)[0] || null])),
@@ -539,6 +589,7 @@ const server = http.createServer(async (req, res) => {
       S.ledger = S.ledger.slice(0, 400);
       let data;
       if (item.kind === 'dataset') data = (S.marketHistory[item.symbol] || []).slice(-100);
+      else if (item.kind === 'lgai' && item.id === 'lgai-scan') data = lgaiAll;
       else if (item.kind === 'lgai') {
         // exclusive: trend snapshot + raw recent pushes, read live from the push db
         let pushes = [];

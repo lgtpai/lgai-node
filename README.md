@@ -75,7 +75,7 @@ Nodes collect data → Coordinator consensus pricing → Network predictions (mo
 | `TICK_MS` | 45000 | Task generation interval |
 | `HORIZON_MIN` | 15 | Prediction verification horizon (minutes) |
 | `DATA_DIR` | coordinator/data | State persistence dir (gitignored) |
-| `LGAI_DB` | auto-detected | Path to the proprietary LGAI push database (sqlite, `newcoins` table). When connected (read-only, Node ≥ 22), push-price bulldozer trend becomes the **top-priority prediction basis**: LGAI push > AI ensemble > human sentiment > SMA |
+| `LGAI_DB` | auto-detected | Path to the proprietary LGAI push database (sqlite, `newcoins` table). When connected (read-only, Node ≥ 22), push-price bulldozer trend becomes the **top-priority prediction basis** (LGAI push > AI ensemble > human sentiment > SMA), plus a **full-market scan of every pushed project** (~900): breadth (LONG/SHORT/range counts) + top-mover rankings, refreshed every 5 min, sold as the `lgai-scan` marketplace item |
 
 ## Protocol (HTTP JSON)
 

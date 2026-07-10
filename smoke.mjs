@@ -137,6 +137,12 @@ try {
   if (!dsB || dsB.lgaiWeight !== 1.5 || dsB.price !== 75) fail('dataset LGAI weight/pricing wrong: ' + JSON.stringify(dsB));
   const lgB = mkt.find(l => l.id === 'lgai-BTCUSDT');
   if (!lgB || lgB.lgaiWeight !== 2.0 || lgB.price !== 80) fail('LGAI exclusive listing missing/wrong');
+  // full-market scan across all pushed projects
+  const A = s3.lgaiAll;
+  if (!A || A.total < 3) fail('full-market scan missing: ' + JSON.stringify(A));
+  if (!A.topLong.some(g => g.token === 'BTC')) fail('full-market topLong missing BTC');
+  if (A.long < 3) fail('full-market breadth wrong');
+  if (!mkt.find(l => l.id === 'lgai-scan' && l.price === 120)) fail('lgai-scan listing missing');
   const buyLgai = await new Promise(resolve => {
     const cli = spawn(process.execPath, [path.join(root, 'client/lgai-node.js'),
       '-c', BASE, '--mock', '--buy', 'lgai-BTCUSDT', '--name', 'smoke-node'], {

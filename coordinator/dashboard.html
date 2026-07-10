@@ -135,6 +135,11 @@ footer{max-width:1240px;margin:22px auto 0;padding:0 24px;font-size:11.5px;color
           <thead><tr id="thLgai"></tr></thead>
           <tbody id="lgai"></tbody>
         </table></div>
+        <div id="lgaiSum" style="padding:10px 20px;font-size:12px;font-weight:700;border-top:1px solid var(--line)"></div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr id="thLgaiTop"></tr></thead>
+          <tbody id="lgaiTop"></tbody>
+        </table></div>
       </div>
       <div class="panel" style="margin-top:14px">
         <h2 data-k="pPreds">NETWORK PREDICTIONS</h2>
@@ -188,6 +193,8 @@ en:{
   pFeedback:'HUMAN FEEDBACK · PoI DUAL-CHANNEL',
   pLgai:'LGAI PUSH TREND · PROPRIETARY SIGNAL',
   thLgai:['Pair','Bulldozer Trend','Push Up-Ratio','Pushes','Last Push Price','Last Push Time'],
+  thLgaiTop:['#','Project','Trend','Up-Ratio','Pushes','Last Push'],
+  breadth:A=>`Full-market scan: ${A.total} projects · ${A.fresh} active (72h) · 🚜 LONG ${A.long} · 📉 SHORT ${A.short} · range ${A.mixed}`,
   trendNone:'RANGE / MIXED',
   eLgai:'Push database not connected — start coordinator with LGAI_DB=/path/to/lgai.db (Node ≥ 22)',
   thNodes:['Name','Platform','Status','Tier','Load','Points','Tasks','Strikes','Last Seen'],
@@ -221,6 +228,8 @@ zh:{
   pFeedback:'人类反馈 · PoI 人机双通道',
   pLgai:'LGAI 推送趋势 · 独家信号源',
   thLgai:['交易对','推土机趋势','推送上涨占比','推送数','最新推送价','最新推送时间'],
+  thLgaiTop:['#','项目','趋势','上涨占比','推送数','最新推送'],
+  breadth:A=>`全库扫描：${A.total} 项目 · 活跃 ${A.fresh}（72h）· 🚜多头 ${A.long} · 📉出货 ${A.short} · 震荡 ${A.mixed}`,
   trendNone:'震荡 / 分歧',
   eLgai:'推送数据库未连接 —— 启动协调端时设置 LGAI_DB=/path/to/lgai.db（需 Node ≥ 22）',
   thNodes:['名称','平台','状态','等级','负载','积分','任务','违规','最后心跳'],
@@ -259,7 +268,7 @@ function applyLang(){
   document.querySelectorAll('[data-k]').forEach(el=>{el.textContent=T()[el.dataset.k]});
   $('foot').textContent=T().foot;
   $('langBtn').textContent=LANG==='zh'?'EN':'中文';
-  for(const [id,key] of [['thNodes','thNodes'],['thSigs','thSigs'],['thPreds','thPreds'],['thOracle','thOracle'],['thMarket','thMarket'],['thLgai','thLgai']])
+  for(const [id,key] of [['thNodes','thNodes'],['thSigs','thSigs'],['thPreds','thPreds'],['thOracle','thOracle'],['thMarket','thMarket'],['thLgai','thLgai'],['thLgaiTop','thLgaiTop']])
     $(id).innerHTML=T()[key].map(h=>`<th>${h}</th>`).join('');
 }
 function toggleLang(){
@@ -341,6 +350,19 @@ async function refresh(){
       <td class="mono">${g.lastPrice}</td>
       <td class="mono" style="color:var(--dim)">${esc(g.lastPush)}</td></tr>`).join('')
       :empty(6,t.eLgai);
+    const A=d.lgaiAll;
+    if(A&&A.total){
+      $('lgaiSum').textContent=t.breadth(A);
+      $('lgaiSum').style.color=A.long>=A.short?'#34d399':'#f87171';
+      const tops=[...(A.topLong||[]),...(A.topShort||[])];
+      $('lgaiTop').innerHTML=tops.length?tops.map((g,i)=>`<tr>
+        <td class="mono" style="color:var(--dim)">${i+1}</td>
+        <td>${esc(g.token)}</td>
+        <td><span class="pill ${g.dir==='LONG'?'p-win':'p-loss'}">${g.dir==='LONG'?'🚜 LONG':'📉 SHORT'}</span></td>
+        <td class="mono" style="color:${g.dir==='LONG'?'#34d399':'#f87171'};font-weight:800">${Math.round(g.upRatio*100)}%</td>
+        <td>${g.pushes}</td>
+        <td class="mono" style="color:var(--dim)">${esc(g.lastPush)}</td></tr>`).join(''):'';
+    }else{$('lgaiSum').textContent='';$('lgaiTop').innerHTML='';}
     $('preds').innerHTML=d.predictions.length?d.predictions.map(p=>{
       let basis=p.basis||'—';
       if(LANG==='zh')for(const [en,zh] of Object.entries(t.regimes))basis=basis.replace(en,zh);
