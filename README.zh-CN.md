@@ -75,6 +75,7 @@ npm run smoke
 | `TICK_MS` | 45000 | 任务生成周期 |
 | `HORIZON_MIN` | 15 | 预测验证时限（分钟） |
 | `DATA_DIR` | coordinator/data | 状态持久化目录（已 gitignore） |
+| `LGAI_DB` | 自动探测 | 猎狗推送数据库路径（sqlite，`newcoins` 表）。连接后（只读，需 Node ≥ 22），推送价推土机趋势成为**预测最高优先级依据**：LGAI 推送 > AI 集成信号 > 人类情绪 > SMA |
 
 ## 协议（HTTP JSON）
 

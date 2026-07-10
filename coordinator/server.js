@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 const PORT = +(process.env.PORT || 18402);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const TICK_MS = +(process.env.TICK_MS || 45_000);       // task generation interval
@@ -40,6 +40,7 @@ let S = {
   market: { sales: [] }, // AI data marketplace sales
   feedback: [],     // human feedback trail (PoI dual-channel: humans + AI agents)
   sentiment: {},    // symbol -> [{userId, dir, ts}] human market sentiment votes
+  lgai: {},         // symbol -> bulldozer trend derived from proprietary LGAI push data (optional)
   stats: { tasksCompleted: 0, pointsIssued: 0, wins: 0, losses: 0, marketVolume: 0, humanWins: 0, humanLosses: 0 },
 };
 function load() {
@@ -111,6 +112,40 @@ function strike(nodeId, task, note) {
   S.ledger = S.ledger.slice(0, 400);
 }
 
+// ---- LGAI push data: proprietary network-wide holding-cost pushes (strongest signal source) ----
+// Optional: set LGAI_DB=/path/to/lgai.db (or auto-detected at ../../data/lgai.db). Requires Node >= 22 (node:sqlite).
+const LGAI_DB = process.env.LGAI_DB || (fs.existsSync(path.join(__dirname, '../../data/lgai.db')) ? path.join(__dirname, '../../data/lgai.db') : '');
+let lgaiDb = null;
+async function openLgaiDb() {
+  if (!LGAI_DB) return;
+  try {
+    const { DatabaseSync } = await import('node:sqlite');
+    lgaiDb = new DatabaseSync(LGAI_DB, { readOnly: true });
+    log(`[lgai] push database connected (read-only): ${LGAI_DB}`);
+    refreshLgaiPush();
+  } catch (e) { log(`[lgai] push db unavailable: ${e.message}`); }
+}
+function refreshLgaiPush() {
+  if (!lgaiDb) return;
+  for (const sym of SYMBOLS) {
+    try {
+      const rows = lgaiDb.prepare('SELECT price, time FROM newcoins WHERE token = ? ORDER BY time DESC LIMIT 15')
+        .all(sym.replace(/USDT$/, ''));
+      if (rows.length < 5) continue;
+      const prices = rows.map(r => +r.price).reverse(); // oldest -> newest
+      let ups = 0;
+      for (let i = 1; i < prices.length; i++) if (prices[i] > prices[i - 1]) ups++;
+      const upRatio = ups / (prices.length - 1);
+      // Bulldozer rule on push prices: >=70% one-directional pushes set the direction
+      const dir = upRatio >= 0.7 ? 'LONG' : upRatio <= 0.3 ? 'SHORT' : null;
+      S.lgai[sym] = {
+        symbol: sym, dir, upRatio: +upRatio.toFixed(2),
+        pushes: rows.length, lastPush: rows[0].time, lastPrice: +rows[0].price,
+      };
+    } catch { /* token missing or schema mismatch: skip */ }
+  }
+}
+
 function maybeCreatePrediction(symbol) {
   const open = S.predictions.some(p => p.symbol === symbol && (p.status === 'open' || p.status === 'verifying'));
   const hist = S.marketHistory[symbol] || [];
@@ -125,8 +160,17 @@ function maybeCreatePrediction(symbol) {
     if (nL / senti.length >= 0.7) humanDir = 'LONG';
     else if ((senti.length - nL) / senti.length >= 0.7) humanDir = 'SHORT';
   }
+  // LGAI push trend (proprietary, strongest) > AI ensemble signal > human sentiment > SMA
+  const push = S.lgai[symbol];
+  const pushTs = push ? Date.parse(String(push.lastPush).replace(' ', 'T')) : NaN;
+  const pushOk = push && push.dir && (!Number.isFinite(pushTs) || now() - pushTs < 48 * 3600_000);
   let dir, basis;
-  if (sig && Math.abs(sig.score) >= 0.15) {
+  if (pushOk) {
+    dir = push.dir;
+    basis = `LGAI push bulldozer ${Math.round(push.upRatio * 100)}%↑ (${push.pushes} pushes)`;
+    if (sig && Math.abs(sig.score) >= 0.15 && (sig.score > 0 ? 'LONG' : 'SHORT') === dir) basis += ' + AI confirm';
+    if (humanDir === dir) basis += ' + human consensus';
+  } else if (sig && Math.abs(sig.score) >= 0.15) {
     dir = sig.score > 0 ? 'LONG' : 'SHORT';
     basis = `${sig.regime} (${sig.score})`;
     if (humanDir === dir) basis += ' + human consensus';
@@ -231,6 +275,7 @@ function finalize(t) {
 }
 
 function tick() {
+  refreshLgaiPush();
   const online = onlineNodes();
   if (online.length) {
     const red = Math.min(3, online.length);
@@ -331,6 +376,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, {
         symbol: sym,
         oracle: S.oracle[sym] || null,
+        lgaiPush: S.lgai[sym] || null,
         signal: S.signals.find(s => s.symbol === sym) || null,
         predictions: S.predictions.filter(p => p.symbol === sym).slice(0, 5),
         accuracy: S.stats.wins + S.stats.losses ? +(S.stats.wins / (S.stats.wins + S.stats.losses) * 100).toFixed(1) : null,
@@ -366,6 +412,7 @@ const server = http.createServer(async (req, res) => {
           return [sym, { long: arr.filter(v => v.dir === 'LONG').length, short: arr.filter(v => v.dir === 'SHORT').length }];
         })),
         oracle: Object.values(S.oracle),
+        lgai: Object.values(S.lgai),
         chain: S.chain, archive: S.archive.slice(0, 10),
         market: { listings: listings(), sales: S.market.sales.slice(0, 8), volume: S.stats.marketVolume || 0 },
         symbols: Object.fromEntries(SYMBOLS.map(s => [s, (S.marketHistory[s] || []).slice(-1)[0] || null])),
@@ -504,6 +551,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 load();
+await openLgaiDb();
 setInterval(tick, TICK_MS);
 server.listen(PORT, () => {
   const tty = process.stdout.isTTY;

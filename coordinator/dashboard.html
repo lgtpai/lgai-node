@@ -130,6 +130,13 @@ footer{max-width:1240px;margin:22px auto 0;padding:0 24px;font-size:11.5px;color
         </table></div>
       </div>
       <div class="panel" style="margin-top:14px">
+        <h2 data-k="pLgai">LGAI PUSH TREND · PROPRIETARY SIGNAL</h2>
+        <div style="overflow-x:auto"><table>
+          <thead><tr id="thLgai"></tr></thead>
+          <tbody id="lgai"></tbody>
+        </table></div>
+      </div>
+      <div class="panel" style="margin-top:14px">
         <h2 data-k="pPreds">NETWORK PREDICTIONS</h2>
         <div style="overflow-x:auto"><table>
           <thead><tr id="thPreds"></tr></thead>
@@ -179,6 +186,10 @@ en:{
   pNodes:'NODES & PARTICIPANTS',pSigs:'AI INFERENCE SIGNALS · Bulldozer / Accumulation / Distribution',pPreds:'NETWORK PREDICTIONS',
   pOracle:'DECENTRALIZED ORACLE · FEEDS',pArchive:'PERMANENT ARCHIVE · HASH CHAIN',pMarket:'AI DATA MARKETPLACE',pLedger:'CONTRIBUTION LEDGER',
   pFeedback:'HUMAN FEEDBACK · PoI DUAL-CHANNEL',
+  pLgai:'LGAI PUSH TREND · PROPRIETARY SIGNAL',
+  thLgai:['Pair','Bulldozer Trend','Push Up-Ratio','Pushes','Last Push Price','Last Push Time'],
+  trendNone:'RANGE / MIXED',
+  eLgai:'Push database not connected — start coordinator with LGAI_DB=/path/to/lgai.db (Node ≥ 22)',
   thNodes:['Name','Platform','Status','Tier','Load','Points','Tasks','Strikes','Last Seen'],
   thSigs:['Pair','Score','Regime','🚜 Bulldozer','🧲 Accum','📉 Distrib','RSI','Node','Time','Rate'],
   thPreds:['Pair','Direction','Basis','Entry','Exit','Status','Time','Your Call'],
@@ -207,6 +218,10 @@ zh:{
   pNodes:'节点与参与者 · NODES',pSigs:'AI 推理信号 · 推土机 / 吸筹 / 出货',pPreds:'网络预测 · PREDICTIONS',
   pOracle:'去中心化预言机 · ORACLE FEEDS',pArchive:'永久存证 · 哈希链',pMarket:'AI 数据市场',pLedger:'贡献账本 · LEDGER',
   pFeedback:'人类反馈 · PoI 人机双通道',
+  pLgai:'LGAI 推送趋势 · 独家信号源',
+  thLgai:['交易对','推土机趋势','推送上涨占比','推送数','最新推送价','最新推送时间'],
+  trendNone:'震荡 / 分歧',
+  eLgai:'推送数据库未连接 —— 启动协调端时设置 LGAI_DB=/path/to/lgai.db（需 Node ≥ 22）',
   thNodes:['名称','平台','状态','等级','负载','积分','任务','违规','最后心跳'],
   thSigs:['交易对','综合评分','形态','🚜 推土机','🧲 吸筹','📉 出货','RSI','节点','时间','评价'],
   thPreds:['交易对','方向','依据','入场价','出场价','状态','时间','你的判断'],
@@ -242,7 +257,7 @@ function applyLang(){
   document.querySelectorAll('[data-k]').forEach(el=>{el.textContent=T()[el.dataset.k]});
   $('foot').textContent=T().foot;
   $('langBtn').textContent=LANG==='zh'?'EN':'中文';
-  for(const [id,key] of [['thNodes','thNodes'],['thSigs','thSigs'],['thPreds','thPreds'],['thOracle','thOracle'],['thMarket','thMarket']])
+  for(const [id,key] of [['thNodes','thNodes'],['thSigs','thSigs'],['thPreds','thPreds'],['thOracle','thOracle'],['thMarket','thMarket'],['thLgai','thLgai']])
     $(id).innerHTML=T()[key].map(h=>`<th>${h}</th>`).join('');
 }
 function toggleLang(){
@@ -316,6 +331,14 @@ async function refresh(){
       <td>${ago(s.ts)}</td>
       <td style="white-space:nowrap"><button class="fbb" onclick="fb('signal','${s.id}','up')">👍 ${s.up||0}</button><button class="fbb" onclick="fb('signal','${s.id}','down')">👎 ${s.down||0}</button></td></tr>`;
     }).join(''):empty(10,t.eSigs);
+    $('lgai').innerHTML=(d.lgai&&d.lgai.length)?d.lgai.map(g=>`<tr>
+      <td>${esc(g.symbol)}</td>
+      <td>${g.dir?`<span class="pill ${g.dir==='LONG'?'p-win':'p-loss'}">${g.dir==='LONG'?'🚜 LONG':'📉 SHORT'}</span>`:`<span class="pill p-open">${t.trendNone}</span>`}</td>
+      <td class="mono" style="color:${g.upRatio>=0.7?'#34d399':g.upRatio<=0.3?'#f87171':'var(--muted)'};font-weight:800">${Math.round(g.upRatio*100)}%</td>
+      <td>${g.pushes}</td>
+      <td class="mono">${g.lastPrice}</td>
+      <td class="mono" style="color:var(--dim)">${esc(g.lastPush)}</td></tr>`).join('')
+      :empty(6,t.eLgai);
     $('preds').innerHTML=d.predictions.length?d.predictions.map(p=>{
       let basis=p.basis||'—';
       if(LANG==='zh')for(const [en,zh] of Object.entries(t.regimes))basis=basis.replace(en,zh);
