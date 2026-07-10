@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.1.1';
+const VERSION = '0.2.0';
 const PORT = +(process.env.PORT || 18402);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const TICK_MS = +(process.env.TICK_MS || 45_000);       // task generation interval
@@ -38,7 +38,9 @@ let S = {
   chain: { seq: 0, head: '' },
   oracle: {},       // symbol -> latest consensus feed (decentralized oracle)
   market: { sales: [] }, // AI data marketplace sales
-  stats: { tasksCompleted: 0, pointsIssued: 0, wins: 0, losses: 0, marketVolume: 0 },
+  feedback: [],     // human feedback trail (PoI dual-channel: humans + AI agents)
+  sentiment: {},    // symbol -> [{userId, dir, ts}] human market sentiment votes
+  stats: { tasksCompleted: 0, pointsIssued: 0, wins: 0, losses: 0, marketVolume: 0, humanWins: 0, humanLosses: 0 },
 };
 function load() {
   try { S = { ...S, ...JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) }; }
@@ -114,12 +116,23 @@ function maybeCreatePrediction(symbol) {
   const hist = S.marketHistory[symbol] || [];
   if (open || hist.length < 12 || Math.random() > 0.5) return;
   const last = hist[hist.length - 1].close;
-  // Prefer node AI inference signals (bulldozer/accumulation/distribution composite); fall back to SMA momentum
+  // PoI dual-channel: AI inference signals first, fused with recent human sentiment; SMA as last resort
   const sig = S.signals.find(s => s.symbol === symbol && now() - s.ts < 10 * 60_000);
+  const senti = (S.sentiment[symbol] || []).filter(v => now() - v.ts < 60 * 60_000).slice(-30);
+  const nL = senti.filter(v => v.dir === 'LONG').length;
+  let humanDir = null;
+  if (senti.length >= 3) {
+    if (nL / senti.length >= 0.7) humanDir = 'LONG';
+    else if ((senti.length - nL) / senti.length >= 0.7) humanDir = 'SHORT';
+  }
   let dir, basis;
   if (sig && Math.abs(sig.score) >= 0.15) {
     dir = sig.score > 0 ? 'LONG' : 'SHORT';
     basis = `${sig.regime} (${sig.score})`;
+    if (humanDir === dir) basis += ' + human consensus';
+  } else if (humanDir) {
+    dir = humanDir;
+    basis = `Human sentiment (${senti.length} votes)`;
   } else {
     const closes = hist.slice(-10).map(h => h.close);
     const sma = closes.reduce((a, b) => a + b, 0) / closes.length;
@@ -177,10 +190,10 @@ function finalize(t) {
       const best = valid.reduce((a, b) => Math.abs(b.score - score) < Math.abs(a.score - score) ? b : a);
       const rec = archivePut('ai_signal', { symbol: t.symbol, score, regime, contributors: valid.length });
       S.signals.unshift({
-        ts: now(), symbol: t.symbol, score, regime: String(regime || '').slice(0, 24),
+        id: uid(), ts: now(), symbol: t.symbol, score, regime: String(regime || '').slice(0, 24),
         features: best.features, contributors: valid.length,
         name: valid.length > 1 ? `${valid.length}-node ensemble` : S.nodes[valid[0].nid]?.name,
-        proof: rec.txid,
+        proof: rec.txid, up: 0, down: 0,
       });
       S.signals = S.signals.slice(0, 100);
     }
@@ -198,8 +211,17 @@ function finalize(t) {
       p.resolvedAt = now();
       p.price1 = median(entries.map(([, r]) => +r.price1).filter(Number.isFinite));
       S.stats[majority === 'WIN' ? 'wins' : 'losses'] += 1;
-      // Full prediction lifecycle archived: entry -> verification -> verdict
-      const rec = archivePut('prediction', { symbol: p.symbol, dir: p.dir, basis: p.basis, price0: p.price0, price1: p.price1, result: majority, verifiers: entries.length });
+      // PoI human verification: voters who called the outcome correctly earn a verified-insight bonus
+      let vOk = 0, vBad = 0;
+      for (const [uidV, dirV] of Object.entries(p.votes || {})) {
+        const correct = (majority === 'WIN') === (dirV === p.dir);
+        if (correct) {
+          vOk++; S.stats.humanWins = (S.stats.humanWins || 0) + 1;
+          award(uidV, { id: p.id, type: 'feedback', symbol: p.symbol }, 5, `verified human insight ${dirV}`);
+        } else { vBad++; S.stats.humanLosses = (S.stats.humanLosses || 0) + 1; }
+      }
+      // Full prediction lifecycle archived: entry -> verification -> verdict (+ human votes)
+      const rec = archivePut('prediction', { symbol: p.symbol, dir: p.dir, basis: p.basis, price0: p.price0, price1: p.price1, result: majority, verifiers: entries.length, humanVotes: { correct: vOk, wrong: vBad } });
       p.proof = rec.txid;
     }
   }
@@ -320,7 +342,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/stats') {
       const nodes = Object.values(S.nodes).map(n => ({
-        id: n.id.slice(0, 8), name: n.name, platform: n.platform, arch: n.arch,
+        id: n.id.slice(0, 8), name: n.name, role: n.role || 'node', platform: n.platform, arch: n.arch,
         cpus: n.cpus, memGB: n.memGB, version: n.version,
         online: now() - n.lastSeen < ONLINE_MS,
         points: n.points, tasksDone: n.tasksDone, strikes: n.strikes, tier: tierOf(n),
@@ -334,8 +356,15 @@ const server = http.createServer(async (req, res) => {
         openTasks: Object.values(S.tasks).filter(t => t.status === 'pending' || t.status === 'assigned').length,
         accuracy: { wins, losses, rate: wins + losses ? +(wins / (wins + losses) * 100).toFixed(1) : null },
         nodes, ledger: S.ledger.slice(0, 30),
-        predictions: S.predictions.slice(0, 20),
+        predictions: S.predictions.slice(0, 20).map(p => ({ ...p, votes: undefined, votesCount: Object.keys(p.votes || {}).length })),
         signals: S.signals.slice(0, 10),
+        feedback: S.feedback.slice(0, 15),
+        humanAccuracy: (S.stats.humanWins + S.stats.humanLosses)
+          ? +(S.stats.humanWins / (S.stats.humanWins + S.stats.humanLosses) * 100).toFixed(1) : null,
+        sentiment: Object.fromEntries(SYMBOLS.map(sym => {
+          const arr = (S.sentiment[sym] || []).filter(v => now() - v.ts < 60 * 60_000);
+          return [sym, { long: arr.filter(v => v.dir === 'LONG').length, short: arr.filter(v => v.dir === 'SHORT').length }];
+        })),
         oracle: Object.values(S.oracle),
         chain: S.chain, archive: S.archive.slice(0, 10),
         market: { listings: listings(), sales: S.market.sales.slice(0, 8), volume: S.stats.marketVolume || 0 },
@@ -346,14 +375,15 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (!b.name || typeof b.name !== 'string') return send(res, 400, { error: 'name required' });
       const id = uid(), token = crypto.randomBytes(16).toString('hex');
+      const role = b.role === 'human' ? 'human' : 'node';
       S.nodes[id] = {
-        id, token, name: String(b.name).slice(0, 40),
-        platform: String(b.platform || '?').slice(0, 20), arch: String(b.arch || '?').slice(0, 12),
+        id, token, role, name: String(b.name).slice(0, 40),
+        platform: String(b.platform || (role === 'human' ? 'web' : '?')).slice(0, 20), arch: String(b.arch || '-').slice(0, 12),
         cpus: +b.cpus || 0, memGB: +b.memGB || 0, version: String(b.version || '?').slice(0, 12),
         createdAt: now(), lastSeen: now(), points: 0, tasksDone: 0, strikes: 0, metrics: {},
       };
       save();
-      log(`[join] ${b.name} (${b.platform}/${b.arch}) -> ${id.slice(0, 8)}`);
+      log(`[join] ${role} ${b.name} -> ${id.slice(0, 8)}`);
       return send(res, 200, { nodeId: id, token, network: 'LGAI Testnet', coordinatorVersion: VERSION, heartbeatMs: 30_000, pollMs: 8_000 });
     }
     const node = auth(req);
@@ -370,8 +400,62 @@ const server = http.createServer(async (req, res) => {
       save();
       return send(res, 200, { ok: true });
     }
+    // ---- PoI human feedback: rate signals, vote on predictions, contribute sentiment ----
+    if (req.method === 'POST' && url.pathname === '/api/feedback') {
+      const b = await readBody(req);
+      node.lastSeen = now();
+      const hour = S.feedback.filter(f => f.userId === node.id && now() - f.ts < 3600_000).length;
+      if (hour >= 30) return send(res, 429, { error: 'feedback rate limit (30/hour)' });
+      const pushFb = (targetType, targetId, value, symbol) => {
+        S.feedback.unshift({ ts: now(), userId: node.id, name: node.name, role: node.role || 'node', targetType, targetId, value, symbol });
+        S.feedback = S.feedback.slice(0, 300);
+      };
+      const fbAward = (pts, note) => award(node.id, { id: 'fb-' + uid(), type: 'feedback', symbol: b.symbol || '' }, pts, note);
+      if (b.targetType === 'signal') {
+        const sig = S.signals.find(x => x.id === b.targetId);
+        if (!sig) return send(res, 404, { error: 'signal not found' });
+        if (S.feedback.some(f => f.userId === node.id && f.targetType === 'signal' && f.targetId === sig.id))
+          return send(res, 409, { error: 'already rated this signal' });
+        const v = b.value === 'up' ? 'up' : 'down';
+        sig[v] = (sig[v] || 0) + 1;
+        pushFb('signal', sig.id, v, sig.symbol);
+        award(node.id, { id: sig.id, type: 'feedback', symbol: sig.symbol }, 2, `signal ${v === 'up' ? 'confirmed' : 'disputed'}`);
+        if (sig.up + sig.down === 5) archivePut('human_feedback', { kind: 'signal', signalId: sig.id, symbol: sig.symbol, up: sig.up, down: sig.down });
+        save();
+        return send(res, 200, { ok: true, up: sig.up, down: sig.down, points: node.points });
+      }
+      if (b.targetType === 'prediction') {
+        const p = S.predictions.find(x => x.id === b.targetId);
+        if (!p) return send(res, 404, { error: 'prediction not found' });
+        if (p.status !== 'open' && p.status !== 'verifying') return send(res, 410, { error: 'prediction already resolved' });
+        p.votes ||= {};
+        if (p.votes[node.id]) return send(res, 409, { error: 'already voted on this prediction' });
+        const dir = b.value === 'LONG' ? 'LONG' : 'SHORT';
+        p.votes[node.id] = dir;
+        pushFb('prediction', p.id, dir, p.symbol);
+        award(node.id, { id: p.id, type: 'feedback', symbol: p.symbol }, 2, `prediction vote ${dir} (bonus on correct outcome)`);
+        save();
+        return send(res, 200, { ok: true, votes: Object.keys(p.votes).length, points: node.points });
+      }
+      if (b.targetType === 'sentiment') {
+        const sym = String(b.targetId || '').toUpperCase();
+        if (!SYMBOLS.includes(sym)) return send(res, 404, { error: 'unknown symbol' });
+        const arr = (S.sentiment[sym] ||= []);
+        if (arr.some(v => v.userId === node.id && now() - v.ts < 30 * 60_000))
+          return send(res, 409, { error: 'sentiment already submitted recently (30min window)' });
+        const dir = b.value === 'LONG' ? 'LONG' : 'SHORT';
+        arr.push({ userId: node.id, dir, ts: now() });
+        if (arr.length > 100) arr.splice(0, arr.length - 100);
+        pushFb('sentiment', sym, dir, sym);
+        award(node.id, { id: 'st-' + uid(), type: 'feedback', symbol: sym }, 2, `market sentiment ${dir}`);
+        save();
+        return send(res, 200, { ok: true, points: node.points });
+      }
+      return send(res, 400, { error: 'targetType must be signal | prediction | sentiment' });
+    }
     if (req.method === 'GET' && url.pathname === '/api/tasks') {
       node.lastSeen = now();
+      if (node.role === 'human') return send(res, 200, { tasks: [] });
       const mine = [];
       for (const t of Object.values(S.tasks)) {
         if (mine.length >= 3) break;

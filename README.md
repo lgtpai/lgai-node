@@ -64,6 +64,7 @@ Nodes collect data → Coordinator consensus pricing → Network predictions (mo
 | 🤝 AI Agent Network | `ai_infer` fanned out to multiple nodes → **ensemble inference** (median score, majority regime); `GET /api/agent/intel?symbol=X` gives any external agent full intelligence in one call |
 | 🛒 AI Data Marketplace | Consensus datasets / AI signal feeds listed for point-settled trading with on-chain sale proofs; `--market` to browse, `--buy <id>` to purchase |
 | 💎 Contribution Incentives | Reputation tiers: Bronze ×1.0 / Silver ×1.2 (≥100 pts, strike rate <15%) / Gold ×1.5 (≥300 pts, strike rate <5%) — rewards by contribution quality, not hashpower |
+| 🧑‍🤝‍🧑 Human Feedback (PoI dual-channel) | Humans join as verifiers via the dashboard (`role: human`): rate AI signals (👍/👎), call open predictions (bonus paid only when the market proves you right), submit market sentiment (fused into prediction basis when ≥70% one-sided). All feedback earns ledger points, counts toward reputation, and is archived on the hash chain. CLI: `--vote BTCUSDT=LONG` |
 
 ## Coordinator Configuration (env vars)
 
@@ -83,6 +84,7 @@ Node endpoints (auth via `x-node-id` + `x-node-token` headers):
 - `GET  /api/tasks` — claim tasks (5min lease, re-dispatched on timeout)
 - `POST /api/result` — submit results; consensus finalizes once redundancy is met
 - `POST /api/market/buy` — marketplace purchase (point-settled)
+- `POST /api/feedback` — human feedback: `{targetType: signal|prediction|sentiment, targetId, value}` (dedup + 30/hour rate limit)
 
 Public endpoints (oracle / archive / agent collaboration / marketplace):
 - `GET /api/oracle` · `GET /api/oracle/price?symbol=X` — consensus price feeds

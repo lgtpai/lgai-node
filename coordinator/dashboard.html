@@ -70,6 +70,21 @@ td:first-child{color:var(--text);font-weight:700}
 .feed-row .who{color:var(--text);font-weight:700}
 .feed-row .t{color:var(--dim);font-size:11px;white-space:nowrap}
 .empty{padding:26px 20px;color:var(--dim);font-size:13px;text-align:center}
+.fbb{
+  font-size:11px;font-weight:700;padding:3px 9px;border-radius:8px;cursor:pointer;margin-right:4px;
+  border:1px solid var(--line);background:rgba(15,23,42,.8);color:var(--muted);transition:all .15s;white-space:nowrap;
+}
+.fbb:hover{color:#fff;border-color:var(--amber)}
+.fbb.long:hover{border-color:var(--green);color:#34d399}
+.fbb.short:hover{border-color:#ef4444;color:#f87171}
+.senti-row{display:flex;align-items:center;gap:10px;padding:7px 0}
+.senti-row .sym{width:82px;font-weight:800;font-size:12px}
+.senti-bar{flex:1;height:9px;border-radius:5px;background:rgba(148,163,184,.12);overflow:hidden;display:flex}
+.senti-bar .l{background:var(--green);height:100%}
+.senti-bar .s{background:#ef4444;height:100%}
+.senti-n{font-size:10.5px;color:var(--dim);width:66px;text-align:right}
+.rolepill{font-size:9.5px;font-weight:800;padding:1px 7px;border-radius:999px;margin-left:5px;vertical-align:middle}
+.r-h{background:rgba(236,72,153,.14);color:#f472b6}
 footer{max-width:1240px;margin:22px auto 0;padding:0 24px;font-size:11.5px;color:var(--dim)}
 </style>
 </head>
@@ -92,6 +107,7 @@ footer{max-width:1240px;margin:22px auto 0;padding:0 24px;font-size:11.5px;color
     <div class="stat"><div class="k" data-k="cAcc">Prediction Accuracy</div><div class="v v-pink" id="acc">—</div></div>
     <div class="stat"><div class="k" data-k="cChain">Archive Height</div><div class="v v-green" id="chain">—</div></div>
     <div class="stat"><div class="k" data-k="cVol">Market Volume</div><div class="v v-amber" id="vol">—</div></div>
+    <div class="stat"><div class="k" data-k="cHuman">Human Accuracy</div><div class="v v-pink" id="hacc">—</div></div>
   </div>
 
   <div class="cols">
@@ -127,8 +143,13 @@ footer{max-width:1240px;margin:22px auto 0;padding:0 24px;font-size:11.5px;color
         </table></div>
       </div>
       <div class="panel" style="margin-top:14px">
+        <h2 data-k="pFeedback">HUMAN FEEDBACK · PoI DUAL-CHANNEL</h2>
+        <div id="senti" style="padding:8px 20px;border-bottom:1px solid var(--line)"></div>
+        <div class="feed" id="fbfeed" style="max-height:150px"></div>
+      </div>
+      <div class="panel" style="margin-top:14px">
         <h2 data-k="pArchive">PERMANENT ARCHIVE · HASH CHAIN</h2>
-        <div class="feed" id="archive" style="max-height:180px"></div>
+        <div class="feed" id="archive" style="max-height:150px"></div>
       </div>
       <div class="panel" style="margin-top:14px">
         <h2 data-k="pMarket">AI DATA MARKETPLACE</h2>
@@ -151,12 +172,13 @@ footer{max-width:1240px;margin:22px auto 0;padding:0 24px;font-size:11.5px;color
 const I18N={
 en:{
   hSub:'Node Network Dashboard',
-  cOnline:'Online Nodes',cTotal:'Total Nodes',cTasks:'Tasks Done',cPoints:'Points Issued',cAcc:'Prediction Accuracy',cChain:'Archive Height',cVol:'Market Volume',
-  pNodes:'NODES',pSigs:'AI INFERENCE SIGNALS · Bulldozer / Accumulation / Distribution',pPreds:'NETWORK PREDICTIONS',
+  cOnline:'Online Nodes',cTotal:'Total Nodes',cTasks:'Tasks Done',cPoints:'Points Issued',cAcc:'Prediction Accuracy',cChain:'Archive Height',cVol:'Market Volume',cHuman:'Human Accuracy',
+  pNodes:'NODES & PARTICIPANTS',pSigs:'AI INFERENCE SIGNALS · Bulldozer / Accumulation / Distribution',pPreds:'NETWORK PREDICTIONS',
   pOracle:'DECENTRALIZED ORACLE · FEEDS',pArchive:'PERMANENT ARCHIVE · HASH CHAIN',pMarket:'AI DATA MARKETPLACE',pLedger:'CONTRIBUTION LEDGER',
+  pFeedback:'HUMAN FEEDBACK · PoI DUAL-CHANNEL',
   thNodes:['Name','Platform','Status','Tier','Load','Points','Tasks','Strikes','Last Seen'],
-  thSigs:['Pair','Score','Regime','🚜 Bulldozer','🧲 Accum','📉 Distrib','RSI','Node','Time'],
-  thPreds:['Pair','Direction','Basis','Entry','Exit','Status','Time'],
+  thSigs:['Pair','Score','Regime','🚜 Bulldozer','🧲 Accum','📉 Distrib','RSI','Node','Time','Rate'],
+  thPreds:['Pair','Direction','Basis','Entry','Exit','Status','Time','Your Call'],
   thOracle:['Pair','Consensus','Source','Deviation','Nodes','Proof'],
   thMarket:['Item','Type','Size','Price'],
   online:'Online',offline:'Offline',
@@ -167,19 +189,24 @@ en:{
   status:{win:'WIN ✓',loss:'LOSS ✗',open:'Open',verifying:'Verifying'},
   dataset:'Dataset',sigfeed:'Signal feed',pts:'pts',bought:'bought',
   mock:'⚠ MOCK',
-  eNodes:'Waiting for nodes…',eSigs:'No inference signals yet',ePreds:'No predictions yet',eOracle:'No feeds yet',eArchive:'No records yet',eMarket:'No listings yet',eLedger:'No records yet',
+  joinName:'Join as a human verifier — pick a nickname:',
+  votes:'votes',human:'HUMAN',
+  fbTypes:{signal:'rated signal',prediction:'called',sentiment:'sentiment'},
+  sentiHint:'Market sentiment — cast your call (every 30min):',
+  eNodes:'Waiting for nodes…',eSigs:'No inference signals yet',ePreds:'No predictions yet',eOracle:'No feeds yet',eArchive:'No records yet',eMarket:'No listings yet',eLedger:'No records yet',eFb:'No human feedback yet — be the first verifier',
   foot:'LGAI Coordinator · Proof of Intelligence Testnet · auto-refresh every 3s',
   ago:(s)=>s<60?Math.round(s)+'s ago':s<3600?Math.round(s/60)+'m ago':Math.round(s/3600)+'h ago',
   offline_net:'connection lost…'
 },
 zh:{
   hSub:'节点网络仪表盘',
-  cOnline:'在线节点',cTotal:'累计节点',cTasks:'已完成任务',cPoints:'已发积分',cAcc:'预测胜率',cChain:'存证链高',cVol:'市场成交',
-  pNodes:'节点列表 · NODES',pSigs:'AI 推理信号 · 推土机 / 吸筹 / 出货',pPreds:'网络预测 · PREDICTIONS',
+  cOnline:'在线节点',cTotal:'累计节点',cTasks:'已完成任务',cPoints:'已发积分',cAcc:'预测胜率',cChain:'存证链高',cVol:'市场成交',cHuman:'人类验证准确率',
+  pNodes:'节点与参与者 · NODES',pSigs:'AI 推理信号 · 推土机 / 吸筹 / 出货',pPreds:'网络预测 · PREDICTIONS',
   pOracle:'去中心化预言机 · ORACLE FEEDS',pArchive:'永久存证 · 哈希链',pMarket:'AI 数据市场',pLedger:'贡献账本 · LEDGER',
+  pFeedback:'人类反馈 · PoI 人机双通道',
   thNodes:['名称','平台','状态','等级','负载','积分','任务','违规','最后心跳'],
-  thSigs:['交易对','综合评分','形态','🚜 推土机','🧲 吸筹','📉 出货','RSI','节点','时间'],
-  thPreds:['交易对','方向','依据','入场价','出场价','状态','时间'],
+  thSigs:['交易对','综合评分','形态','🚜 推土机','🧲 吸筹','📉 出货','RSI','节点','时间','评价'],
+  thPreds:['交易对','方向','依据','入场价','出场价','状态','时间','你的判断'],
   thOracle:['交易对','共识价','数据源','偏差','节点数','存证'],
   thMarket:['商品','类型','规模','价格'],
   online:'在线',offline:'离线',
@@ -190,7 +217,11 @@ zh:{
   status:{win:'WIN ✓',loss:'LOSS ✗',open:'进行中',verifying:'验证中'},
   dataset:'数据集',sigfeed:'信号流',pts:'分',bought:'购入',
   mock:'⚠ MOCK 模拟',
-  eNodes:'等待节点接入…',eSigs:'暂无推理信号',ePreds:'暂无预测',eOracle:'暂无喂价',eArchive:'暂无存证',eMarket:'暂无商品',eLedger:'暂无记录',
+  joinName:'以人类验证者身份加入 —— 取个昵称：',
+  votes:'票',human:'人类',
+  fbTypes:{signal:'评价信号',prediction:'判断预测',sentiment:'市场情绪'},
+  sentiHint:'市场情绪 —— 投出你的判断（每 30 分钟一次）：',
+  eNodes:'等待节点接入…',eSigs:'暂无推理信号',ePreds:'暂无预测',eOracle:'暂无喂价',eArchive:'暂无存证',eMarket:'暂无商品',eLedger:'暂无记录',eFb:'暂无人类反馈 —— 来做第一个验证者',
   foot:'LGAI Coordinator · Proof of Intelligence Testnet · 数据每 3 秒自动刷新',
   ago:(s)=>s<60?Math.round(s)+'秒前':s<3600?Math.round(s/60)+'分钟前':Math.round(s/3600)+'小时前',
   offline_net:'连接中断…'
@@ -217,6 +248,32 @@ function toggleLang(){
   applyLang();refresh();
 }
 const empty=(cols,msg)=>`<tr><td colspan="${cols}" class="empty">${msg}</td></tr>`;
+
+// ---- PoI human feedback: browser users join as human verifiers ----
+let HUM=null;
+try{HUM=JSON.parse(localStorage.getItem('lgai_hum'))}catch(e){}
+async function ensureHuman(){
+  if(HUM)return HUM;
+  const name=prompt(T().joinName,'guest-'+Math.random().toString(36).slice(2,6));
+  if(!name)throw new Error('cancelled');
+  const r=await (await fetch('/api/register',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({name:name.slice(0,20),role:'human'})})).json();
+  HUM={nodeId:r.nodeId,token:r.token,name};
+  try{localStorage.setItem('lgai_hum',JSON.stringify(HUM))}catch(e){}
+  return HUM;
+}
+async function fb(targetType,targetId,value){
+  try{
+    await ensureHuman();
+    const r=await fetch('/api/feedback',{method:'POST',
+      headers:{'content-type':'application/json','x-node-id':HUM.nodeId,'x-node-token':HUM.token},
+      body:JSON.stringify({targetType,targetId,value})});
+    const d=await r.json();
+    if(r.status===401){HUM=null;localStorage.removeItem('lgai_hum');return fb(targetType,targetId,value);}
+    if(!r.ok)alert(d.error||('error '+r.status));
+    else refresh();
+  }catch(e){}
+}
 async function refresh(){
   const t=T();
   try{
@@ -229,8 +286,9 @@ async function refresh(){
     $('acc').textContent=d.accuracy.rate==null?'—':d.accuracy.rate+'%';
     $('chain').textContent=d.chain?d.chain.seq.toLocaleString():'—';
     $('vol').textContent=d.market?d.market.volume.toLocaleString():'—';
+    $('hacc').textContent=d.humanAccuracy==null?'—':d.humanAccuracy+'%';
     $('nodes').innerHTML=d.nodes.length?d.nodes.map(n=>`<tr>
-      <td>${esc(n.name)} <span class="mono" style="color:var(--dim);font-size:10px">${n.id}</span></td>
+      <td>${esc(n.name)}${n.role==='human'?` <span class="rolepill r-h">${t.human}</span>`:''} <span class="mono" style="color:var(--dim);font-size:10px">${n.id}</span></td>
       <td>${esc(n.platform)}/${esc(n.arch)}</td>
       <td><span class="pill ${n.online?'p-on':'p-off'}">${n.online?t.online:t.offline}</span></td>
       <td style="color:${TIERC[n.tier]||'var(--dim)'};font-weight:800">${t.tiers[n.tier]||n.tier||'—'}</td>
@@ -252,11 +310,16 @@ async function refresh(){
       <td class="mono">${f.distrib!=null?f.distrib:'—'}</td>
       <td class="mono">${f.rsi!=null?f.rsi:'—'}</td>
       <td>${esc(s.name||String(s.nodeId||'').slice(0,8))}</td>
-      <td>${ago(s.ts)}</td></tr>`;
-    }).join(''):empty(9,t.eSigs);
+      <td>${ago(s.ts)}</td>
+      <td style="white-space:nowrap"><button class="fbb" onclick="fb('signal','${s.id}','up')">👍 ${s.up||0}</button><button class="fbb" onclick="fb('signal','${s.id}','down')">👎 ${s.down||0}</button></td></tr>`;
+    }).join(''):empty(10,t.eSigs);
     $('preds').innerHTML=d.predictions.length?d.predictions.map(p=>{
       let basis=p.basis||'—';
       if(LANG==='zh')for(const [en,zh] of Object.entries(t.regimes))basis=basis.replace(en,zh);
+      const openP=p.status==='open'||p.status==='verifying';
+      const cell=openP
+        ?`<button class="fbb long" onclick="fb('prediction','${p.id}','LONG')">▲ LONG</button><button class="fbb short" onclick="fb('prediction','${p.id}','SHORT')">▼ SHORT</button>`
+        :`<span style="color:var(--dim);font-size:11px">${p.votesCount||0} ${t.votes}</span>`;
       return `<tr>
       <td>${esc(p.symbol)}</td>
       <td style="color:${p.dir==='LONG'?'#34d399':'#f87171'};font-weight:800">${p.dir}</td>
@@ -264,8 +327,25 @@ async function refresh(){
       <td class="mono">${p.price0}</td>
       <td class="mono">${p.price1!=null?p.price1:'—'}</td>
       <td><span class="pill ${p.status==='win'?'p-win':p.status==='loss'?'p-loss':'p-open'}">${t.status[p.status]||p.status}</span></td>
-      <td>${ago(p.createdAt)}</td></tr>`;
-    }).join(''):empty(7,t.ePreds);
+      <td>${ago(p.createdAt)}</td>
+      <td style="white-space:nowrap">${cell}</td></tr>`;
+    }).join(''):empty(8,t.ePreds);
+    // human feedback panel: sentiment voting + recent feedback
+    const symsAll=Object.keys(d.sentiment||{});
+    $('senti').innerHTML=`<div style="font-size:11px;color:var(--dim);padding:4px 0 6px">${t.sentiHint}</div>`+symsAll.map(sym=>{
+      const v=d.sentiment[sym]||{long:0,short:0};
+      const tot=v.long+v.short, lp=tot?Math.round(v.long/tot*100):50;
+      return `<div class="senti-row">
+        <span class="sym">${esc(sym)}</span>
+        <button class="fbb long" onclick="fb('sentiment','${sym}','LONG')">▲</button>
+        <div class="senti-bar"><div class="l" style="width:${tot?lp:0}%"></div><div class="s" style="width:${tot?100-lp:0}%"></div></div>
+        <button class="fbb short" onclick="fb('sentiment','${sym}','SHORT')">▼</button>
+        <span class="senti-n">${v.long}▲ ${v.short}▼</span></div>`;
+    }).join('');
+    $('fbfeed').innerHTML=(d.feedback&&d.feedback.length)?d.feedback.map(f=>`<div class="feed-row">
+      <span><span class="who">${esc(f.name)}</span>${f.role==='human'?` <span class="rolepill r-h">${t.human}</span>`:''} ${t.fbTypes[f.targetType]||f.targetType} ${esc(f.symbol||'')} <b style="color:${/LONG|up/.test(f.value)?'#34d399':'#f87171'}">${esc(f.value)}</b></span>
+      <span class="t mono">${ago(f.ts)}</span></div>`).join('')
+      :`<div class="empty">${t.eFb}</div>`;
     $('oracle').innerHTML=(d.oracle&&d.oracle.length)?d.oracle.map(f=>`<tr>
       <td>${esc(f.symbol)}</td>
       <td class="mono" style="color:#60a5fa;font-weight:800">${f.price}</td>

@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-const VERSION = '0.1.1';
+const VERSION = '0.2.0';
 
 // ---------------- args ----------------
 const args = process.argv.slice(2);
@@ -32,6 +32,7 @@ Usage: node lgai-node.js [options]
   --market                 list AI data marketplace items, then exit
   --buy <listingId>        buy a dataset/signal feed with points, then exit
   --intel <symbol>         fetch agent intel (oracle + signal + predictions), then exit
+  --vote <SYM=LONG|SHORT>  submit human market sentiment (PoI feedback), then exit
   --help                   show this help`);
   process.exit(0);
 }
@@ -329,6 +330,15 @@ async function heartbeat() {
   if (opt('--intel')) {
     const r = await api(`/api/agent/intel?symbol=${opt('--intel')}`, { authd: false });
     console.log(JSON.stringify(r, null, 2));
+    process.exit(0);
+  }
+  if (opt('--vote')) {
+    const [sym, dir] = String(opt('--vote')).split(/[=:]/);
+    const r = await api('/api/feedback', {
+      method: 'POST',
+      body: { targetType: 'sentiment', targetId: (sym || '').toUpperCase(), value: (dir || 'LONG').toUpperCase() },
+    });
+    log(green('✓'), `sentiment submitted for ${bold((sym || '').toUpperCase())}, points balance ${bold(r.points)}`);
     process.exit(0);
   }
 

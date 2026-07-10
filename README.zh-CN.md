@@ -64,6 +64,7 @@ npm run smoke
 | 🤝 AI Agent 网络 | `ai_infer` 冗余派发至多节点 → **集成推理**（评分取中位数、形态取多数）；`GET /api/agent/intel?symbol=X` 供外部智能体一键拉取全维度情报 |
 | 🛒 AI 数据市场 | 共识行情数据集 / AI 信号流上架流通，积分结算，成交上链存证；`--market` 看货、`--buy <id>` 购买 |
 | 💎 智能贡献激励 | 声誉分级：铜 ×1.0 / 银 ×1.2（≥100 分且违规率<15%）/ 金 ×1.5（≥300 分且违规率<5%），以贡献质量而非算力定酬 |
+| 🧑‍🤝‍🧑 人类反馈（PoI 人机双通道） | 仪表盘一键以人类验证者身份加入（`role: human`）：评价 AI 信号（👍/👎）、对未决预测投票（**事后按实际行情裁定，投对才发验证奖励**）、提交市场情绪（≥70% 一致时融合进预测依据）。所有反馈计入账本与声誉、上链存证。CLI：`--vote BTCUSDT=LONG` |
 
 ## 协调端配置（环境变量）
 
@@ -83,6 +84,7 @@ npm run smoke
 - `GET  /api/tasks` — 领取任务（租约 5min，超时重新派发）
 - `POST /api/result` — 提交结果，凑齐冗余份数后共识裁定
 - `POST /api/market/buy` — 数据市场购买（积分结算）
+- `POST /api/feedback` — 人类反馈：`{targetType: signal|prediction|sentiment, targetId, value}`（去重 + 每小时 30 次限流）
 
 公开接口（预言机/存证/Agent 协作/市场）：
 - `GET /api/oracle` · `GET /api/oracle/price?symbol=X` — 共识喂价
