@@ -1,6 +1,6 @@
 {
   "name": "lgai-node",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "LGAI Node — cross-platform node client + coordinator for the LGAI Trusted Intelligence Network (Phase 02)",
   "type": "module",
   "engines": { "node": ">=18" },

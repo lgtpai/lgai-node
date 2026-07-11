@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 const PORT = +(process.env.PORT || 18402);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const TICK_MS = +(process.env.TICK_MS || 45_000);       // task generation interval
@@ -189,9 +189,10 @@ function refreshLgaiAll() {
       topShort: fr.filter(t => t.dir === 'SHORT').sort((a, b) => a.upRatio - b.upRatio || b.pushes - a.pushes).slice(0, 10),
       updated: now(),
     };
-    // Trading universe covers ALL trending pushed projects (not just core symbols):
-    // strongest trends first, capped by MAX_DYN_SYMBOLS to match network capacity.
+    // Trading universe: for now restricted to trending MAJORS (leading projects, aligned with
+    // lgai_regime.MAJORS); strongest trends first, capped by MAX_DYN_SYMBOLS.
     dynSyms = trending
+      .filter(t => MAJORS.includes(t.token.toUpperCase()))
       .map(t => t.token.toUpperCase() + 'USDT')
       .filter(sym => !SYMBOLS.includes(sym))
       .slice(0, DYN_MAX);
@@ -202,6 +203,9 @@ function refreshLgaiAll() {
     log(`[lgai] full scan: ${lgaiAll.total} projects (${lgaiAll.fresh} fresh) · LONG ${lgaiAll.long} / SHORT ${lgaiAll.short} / range ${lgaiAll.mixed} · universe +${dynSyms.length} dynamic`);
   } catch (e) { log('[lgai] full scan failed: ' + e.message); }
 }
+// Leading projects whitelist (single source of truth mirrors lgai_regime.MAJORS)
+const MAJORS = (process.env.LGAI_MAJORS || 'BTC,ETH,BNB,XRP,SOL,UNI,ADA,DOGE,LINK,AVAX,ARB,SUI,APT,OP')
+  .split(',').map(s => s.trim().toUpperCase());
 const DYN_MAX = +(process.env.MAX_DYN_SYMBOLS || 20);
 const MAX_OPEN_PRED = +(process.env.MAX_OPEN_PRED || 30);
 let dynSyms = [];        // dynamic trading universe from the push scan
@@ -528,7 +532,7 @@ const server = http.createServer(async (req, res) => {
         feedback: S.feedback.slice(0, 15),
         humanAccuracy: (S.stats.humanWins + S.stats.humanLosses)
           ? +(S.stats.humanWins / (S.stats.humanWins + S.stats.humanLosses) * 100).toFixed(1) : null,
-        sentiment: Object.fromEntries(SYMBOLS.map(sym => {
+        sentiment: Object.fromEntries(universe().map(sym => {
           const arr = (S.sentiment[sym] || []).filter(v => now() - v.ts < 60 * 60_000);
           return [sym, { long: arr.filter(v => v.dir === 'LONG').length, short: arr.filter(v => v.dir === 'SHORT').length }];
         })),
