@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const PORT = +(process.env.PORT || 18402);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const TICK_MS = +(process.env.TICK_MS || 45_000);       // task generation interval
@@ -178,6 +178,8 @@ function refreshLgaiAll() {
       });
     }
     const fr = trends.filter(t => t.fresh);
+    const trending = fr.filter(t => t.dir)
+      .sort((a, b) => Math.abs(b.upRatio - 0.5) - Math.abs(a.upRatio - 0.5) || b.pushes - a.pushes);
     lgaiAll = {
       total: trends.length, fresh: fr.length,
       long: fr.filter(t => t.dir === 'LONG').length,
@@ -187,9 +189,24 @@ function refreshLgaiAll() {
       topShort: fr.filter(t => t.dir === 'SHORT').sort((a, b) => a.upRatio - b.upRatio || b.pushes - a.pushes).slice(0, 10),
       updated: now(),
     };
-    log(`[lgai] full scan: ${lgaiAll.total} projects (${lgaiAll.fresh} fresh) · LONG ${lgaiAll.long} / SHORT ${lgaiAll.short} / range ${lgaiAll.mixed}`);
+    // Trading universe covers ALL trending pushed projects (not just core symbols):
+    // strongest trends first, capped by MAX_DYN_SYMBOLS to match network capacity.
+    dynSyms = trending
+      .map(t => t.token.toUpperCase() + 'USDT')
+      .filter(sym => !SYMBOLS.includes(sym))
+      .slice(0, DYN_MAX);
+    for (const t of trending) {
+      const sym = t.token.toUpperCase() + 'USDT';
+      S.lgai[sym] = { symbol: sym, dir: t.dir, upRatio: t.upRatio, pushes: t.pushes, lastPush: t.lastPush, lastPrice: t.lastPrice };
+    }
+    log(`[lgai] full scan: ${lgaiAll.total} projects (${lgaiAll.fresh} fresh) · LONG ${lgaiAll.long} / SHORT ${lgaiAll.short} / range ${lgaiAll.mixed} · universe +${dynSyms.length} dynamic`);
   } catch (e) { log('[lgai] full scan failed: ' + e.message); }
 }
+const DYN_MAX = +(process.env.MAX_DYN_SYMBOLS || 20);
+const MAX_OPEN_PRED = +(process.env.MAX_OPEN_PRED || 30);
+let dynSyms = [];        // dynamic trading universe from the push scan
+const badSym = {};       // symbols with repeated failed market_data (not exchange-listed) get circuit-broken
+const universe = () => [...SYMBOLS, ...dynSyms];
 
 function maybeCreatePrediction(symbol) {
   const open = S.predictions.some(p => p.symbol === symbol && (p.status === 'open' || p.status === 'verifying'));
@@ -234,6 +251,30 @@ function maybeCreatePrediction(symbol) {
   });
   S.predictions = S.predictions.slice(0, 120);
   log(`[pred] ${symbol} ${dir} @ ${last} basis=${basis}`);
+}
+
+// Shared prediction resolution: node consensus verdicts and coordinator self-resolution both land here
+function resolvePrediction(p, win, price1, verifiers) {
+  p.status = win ? 'win' : 'loss';
+  p.resolvedAt = now();
+  p.price1 = price1;
+  S.stats[win ? 'wins' : 'losses'] += 1;
+  // PoI human verification: voters who called the outcome correctly earn a verified-insight bonus
+  let vOk = 0, vBad = 0;
+  for (const [uidV, dirV] of Object.entries(p.votes || {})) {
+    const correct = win === (dirV === p.dir);
+    if (correct) {
+      vOk++; S.stats.humanWins = (S.stats.humanWins || 0) + 1;
+      award(uidV, { id: p.id, type: 'feedback', symbol: p.symbol }, 5, `verified human insight ${dirV}`);
+    } else { vBad++; S.stats.humanLosses = (S.stats.humanLosses || 0) + 1; }
+  }
+  // Full prediction lifecycle archived: entry -> verification -> verdict (+ human votes)
+  const rec = archivePut('prediction', {
+    symbol: p.symbol, dir: p.dir, basis: p.basis, price0: p.price0, price1: p.price1,
+    result: win ? 'WIN' : 'LOSS', verifiers, selfResolved: verifiers === 0 || undefined,
+    humanVotes: { correct: vOk, wrong: vBad },
+  });
+  p.proof = rec.txid;
 }
 
 function finalize(t) {
@@ -295,24 +336,7 @@ function finalize(t) {
       else strike(nid, t, `verdict=${r.verdict} minority`);
     }
     const p = S.predictions.find(p => p.id === t.payload.predictionId);
-    if (p) {
-      p.status = majority === 'WIN' ? 'win' : 'loss';
-      p.resolvedAt = now();
-      p.price1 = median(entries.map(([, r]) => +r.price1).filter(Number.isFinite));
-      S.stats[majority === 'WIN' ? 'wins' : 'losses'] += 1;
-      // PoI human verification: voters who called the outcome correctly earn a verified-insight bonus
-      let vOk = 0, vBad = 0;
-      for (const [uidV, dirV] of Object.entries(p.votes || {})) {
-        const correct = (majority === 'WIN') === (dirV === p.dir);
-        if (correct) {
-          vOk++; S.stats.humanWins = (S.stats.humanWins || 0) + 1;
-          award(uidV, { id: p.id, type: 'feedback', symbol: p.symbol }, 5, `verified human insight ${dirV}`);
-        } else { vBad++; S.stats.humanLosses = (S.stats.humanLosses || 0) + 1; }
-      }
-      // Full prediction lifecycle archived: entry -> verification -> verdict (+ human votes)
-      const rec = archivePut('prediction', { symbol: p.symbol, dir: p.dir, basis: p.basis, price0: p.price0, price1: p.price1, result: majority, verifiers: entries.length, humanVotes: { correct: vOk, wrong: vBad } });
-      p.proof = rec.txid;
-    }
+    if (p) resolvePrediction(p, majority === 'WIN', median(entries.map(([, r]) => +r.price1).filter(Number.isFinite)), entries.length);
   }
   t.status = 'done'; t.doneAt = now();
   S.stats.tasksCompleted += 1;
@@ -324,10 +348,31 @@ function tick() {
   const online = onlineNodes();
   if (online.length) {
     const red = Math.min(3, online.length);
-    for (const sym of SYMBOLS) {
+    // Trading universe = core symbols + every trending pushed project (circuit-broken symbols skipped)
+    for (const sym of universe()) {
+      if ((badSym[sym] || 0) >= 2) continue;
       const exists = Object.values(S.tasks).some(t =>
         t.type === 'market_data' && t.symbol === sym && t.status !== 'done' && t.status !== 'expired');
       if (!exists) createTask('market_data', sym, { interval: '5m', limit: 40 }, red);
+    }
+    // Push-only predictions: any trending pushed project can be predicted straight from push data,
+    // even without exchange history (entry price = latest push price)
+    let openCount = S.predictions.filter(p => p.status === 'open' || p.status === 'verifying').length;
+    for (const sym of universe()) {
+      if (openCount >= MAX_OPEN_PRED) break;
+      const g = S.lgai[sym];
+      if (!g || !g.dir) continue;
+      if ((S.marketHistory[sym] || []).length >= 12) continue; // market-data flow covers these
+      if (S.predictions.some(p => p.symbol === sym && (p.status === 'open' || p.status === 'verifying'))) continue;
+      if (Math.random() > 0.4) continue;
+      S.predictions.unshift({
+        id: uid(), symbol: sym, dir: g.dir, srcPush: true,
+        basis: `LGAI push bulldozer ${Math.round(g.upRatio * 100)}%↑ (${g.pushes} pushes)`,
+        price0: g.lastPrice, createdAt: now(), horizonMin: HORIZON_MIN, status: 'open',
+      });
+      S.predictions = S.predictions.slice(0, 120);
+      openCount++;
+      log(`[pred] ${sym} ${g.dir} @ ${g.lastPrice} basis=LGAI push (push-only)`);
     }
     for (const p of S.predictions) {
       if (p.status === 'open' && now() - p.createdAt >= p.horizonMin * 60_000) {
@@ -343,9 +388,26 @@ function tick() {
       if (Object.keys(t.results).length) finalize(t);
       else {
         t.status = 'expired';
+        // circuit breaker: symbols repeatedly failing market_data (not exchange-listed) get skipped
+        if (t.type === 'market_data') badSym[t.symbol] = (badSym[t.symbol] || 0) + 1;
         if (t.type === 'signal_verify') {
           const p = S.predictions.find(p => p.id === t.payload.predictionId);
-          if (p && p.status === 'verifying') p.status = 'open';
+          if (p && p.status === 'verifying') {
+            // push-only predictions: no exchange price available -> coordinator self-resolves
+            // from the push database (latest push price vs entry push price)
+            let resolved = false;
+            if (p.srcPush && lgaiDb) {
+              try {
+                const row = lgaiDb.prepare('SELECT price FROM newcoins WHERE token = ? ORDER BY time DESC LIMIT 1')
+                  .get(p.symbol.replace(/USDT$/, ''));
+                if (row && Number.isFinite(+row.price)) {
+                  resolvePrediction(p, (p.dir === 'LONG') === (+row.price > p.price0), +row.price, 0);
+                  resolved = true;
+                }
+              } catch { }
+            }
+            if (!resolved) p.status = 'open';
+          }
         }
       }
     }
@@ -471,8 +533,9 @@ const server = http.createServer(async (req, res) => {
           return [sym, { long: arr.filter(v => v.dir === 'LONG').length, short: arr.filter(v => v.dir === 'SHORT').length }];
         })),
         oracle: Object.values(S.oracle),
-        lgai: Object.values(S.lgai),
+        lgai: SYMBOLS.map(sym => S.lgai[sym]).filter(Boolean),
         lgaiAll,
+        universe: { core: SYMBOLS, dynamic: dynSyms, total: universe().length },
         chain: S.chain, archive: S.archive.slice(0, 10),
         market: { listings: listings(), sales: S.market.sales.slice(0, 8), volume: S.stats.marketVolume || 0 },
         symbols: Object.fromEntries(SYMBOLS.map(s => [s, (S.marketHistory[s] || []).slice(-1)[0] || null])),
@@ -546,7 +609,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (b.targetType === 'sentiment') {
         const sym = String(b.targetId || '').toUpperCase();
-        if (!SYMBOLS.includes(sym)) return send(res, 404, { error: 'unknown symbol' });
+        if (!universe().includes(sym)) return send(res, 404, { error: 'unknown symbol' });
         const arr = (S.sentiment[sym] ||= []);
         if (arr.some(v => v.userId === node.id && now() - v.ts < 30 * 60_000))
           return send(res, 409, { error: 'sentiment already submitted recently (30min window)' });

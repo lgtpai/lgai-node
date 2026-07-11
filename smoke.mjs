@@ -20,7 +20,7 @@ const lgaiDbPath = path.join(tmp, 'lgai.db');
   const db = new DatabaseSync(lgaiDbPath);
   db.exec('CREATE TABLE newcoins (ids TEXT, token TEXT, price REAL, time TEXT, address TEXT, chain TEXT)');
   const ins = db.prepare('INSERT INTO newcoins (ids, token, price, time, address, chain) VALUES (?,?,?,?,?,?)');
-  for (const token of ['BTC', 'ETH', 'SOL']) {
+  for (const token of ['BTC', 'ETH', 'SOL', 'FOO']) {
     for (let i = 0; i < 12; i++) {
       const ts = new Date(Date.now() - (12 - i) * 3600_000).toISOString().slice(0, 19).replace('T', ' ');
       ins.run(String(i), token, 100 + i * 3, ts, '', 'test');
@@ -143,6 +143,11 @@ try {
   if (!A.topLong.some(g => g.token === 'BTC')) fail('full-market topLong missing BTC');
   if (A.long < 3) fail('full-market breadth wrong');
   if (!mkt.find(l => l.id === 'lgai-scan' && l.price === 120)) fail('lgai-scan listing missing');
+  // trading universe expands to all trending pushed projects (not just core symbols)
+  if (!s3.universe || !s3.universe.dynamic.includes('FOOUSDT')) fail('dynamic universe missing FOOUSDT: ' + JSON.stringify(s3.universe));
+  const fp = s3.predictions.find(p => p.symbol === 'FOOUSDT');
+  if (!fp) fail('no prediction for dynamic pushed project FOOUSDT');
+  if (!(fp.basis || '').startsWith('LGAI push')) fail('FOOUSDT prediction basis wrong: ' + fp.basis);
   const buyLgai = await new Promise(resolve => {
     const cli = spawn(process.execPath, [path.join(root, 'client/lgai-node.js'),
       '-c', BASE, '--mock', '--buy', 'lgai-BTCUSDT', '--name', 'smoke-node'], {
