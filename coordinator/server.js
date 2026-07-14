@@ -1022,6 +1022,17 @@ const server = http.createServer(async (req, res) => {
 load();
 await openLgaiDb();
 setInterval(tick, TICK_MS);
+server.on('error', e => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(`\n✗ Port ${PORT} is already in use — a coordinator is probably running already.`);
+    console.error(`  Check:   lsof -i :${PORT}`);
+    console.error(`  Stop it: launchctl unload ~/Library/LaunchAgents/com.lgai.coordinator.plist   (if launchd-managed)`);
+    console.error(`           kill $(lsof -ti :${PORT})`);
+    console.error(`  Or run this instance on another port:  PORT=18403 node coordinator/server.js\n`);
+    process.exit(1);
+  }
+  throw e;
+});
 server.listen(PORT, () => {
   const tty = process.stdout.isTTY;
   const amber = s => tty ? `\x1b[1;33m${s}\x1b[0m` : s;
