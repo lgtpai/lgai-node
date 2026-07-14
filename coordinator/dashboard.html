@@ -210,6 +210,7 @@ en:{
   pCtx:'MARKET CONTEXT · PROJECT HEAT / CHAIN TVL / LIQUIDATIONS / FUNDING (node tasks)',
   thCtx:['#','Project','Heat','Trend','Funding /8h','Crowding','Liq 1h L / S','Tilt'],
   ctxTvl:c=>`Chain TVL: $${c.totalB}B${c.chgPct!=null?` (${c.chgPct>0?'+':''}${c.chgPct}% vs 24h)`:''} · top: ${(c.top||[]).map(x=>`${x.name} $${x.tvlB}B`).join(' · ')} · ${c.contributors}-node consensus`,
+  ctxEtf:e=>`${e.asset} spot ETF net ${e.netM>0?'+':''}$${e.netM}M/day (${e.day||''})`,
   eCtx:'No context data yet — nodes are working on TVL / funding / liquidation tasks',
   crowd:{shorts:'crowded shorts',longs:'crowded longs',ok:'neutral'},
   tilt:{long:'long flush',short:'short squeeze',ok:'balanced'},
@@ -221,8 +222,8 @@ en:{
   kindLgai:'LGAI exclusive',
   online:'Online',offline:'Offline',
   tiers:{gold:'Gold',silver:'Silver',bronze:'Bronze'},
-  types:{market_data:'Data',ai_infer:'AI Inference',signal_verify:'Verify',market:'Marketplace',chain_tvl:'Chain TVL',funding_rate:'Funding',liquidation:'Liquidations',feedback:'Feedback',tf_forecast:'TF Forecast'},
-  kinds:{oracle_price:'Oracle price',ai_signal:'AI signal',prediction:'Prediction verdict',market_sale:'Market sale',chain_tvl:'Chain TVL',funding_rate:'Funding rate',liquidation:'Liquidations',human_feedback:'Human feedback',tf_forecast:'TF forecast'},
+  types:{market_data:'Data',ai_infer:'AI Inference',signal_verify:'Verify',market:'Marketplace',chain_tvl:'Chain TVL',funding_rate:'Funding',liquidation:'Liquidations',feedback:'Feedback',tf_forecast:'TF Forecast',etf_flow:'ETF Flow'},
+  kinds:{oracle_price:'Oracle price',ai_signal:'AI signal',prediction:'Prediction verdict',market_sale:'Market sale',chain_tvl:'Chain TVL',funding_rate:'Funding rate',liquidation:'Liquidations',human_feedback:'Human feedback',tf_forecast:'TF forecast',etf_flow:'ETF flow'},
   tfAccHint:'By timeframe:',
   regimes:{'Bulldozer':'Bulldozer','Distribution':'Distribution','Range':'Range'},
   basisPush:'LGAI push',basisOhlcv:'OHLCV',
@@ -258,6 +259,7 @@ zh:{
   pCtx:'市场情境 · 项目热度 / 公链 TVL / 全网爆仓 / 资金费率（节点任务）',
   thCtx:['#','项目','热度','趋势','资金费率 /8h','拥挤度','爆仓 1h 多/空','倾斜'],
   ctxTvl:c=>`公链总 TVL：$${c.totalB}B${c.chgPct!=null?`（较24h ${c.chgPct>0?'+':''}${c.chgPct}%）`:''} · 前列：${(c.top||[]).map(x=>`${x.name} $${x.tvlB}B`).join(' · ')} · ${c.contributors} 节点共识`,
+  ctxEtf:e=>`${e.asset} 现货 ETF 日净流${e.netM>0?'入 +':'出 '}$${Math.abs(e.netM)}M（${e.day||''}）`,
   eCtx:'暂无情境数据 —— 节点正在执行 TVL / 费率 / 爆仓任务',
   crowd:{shorts:'空头拥挤',longs:'多头拥挤',ok:'中性'},
   tilt:{long:'多头被爆',short:'轧空',ok:'均衡'},
@@ -269,8 +271,8 @@ zh:{
   kindLgai:'LGAI 独家',
   online:'在线',offline:'离线',
   tiers:{gold:'金',silver:'银',bronze:'铜'},
-  types:{market_data:'数据采集',ai_infer:'AI 推理',signal_verify:'信号验证',market:'数据市场',chain_tvl:'公链TVL',funding_rate:'资金费率',liquidation:'全网爆仓',feedback:'人类反馈',tf_forecast:'周期预测'},
-  kinds:{oracle_price:'预言机喂价',ai_signal:'AI 信号',prediction:'预测裁定',market_sale:'市场成交',chain_tvl:'公链TVL',funding_rate:'资金费率',liquidation:'全网爆仓',human_feedback:'人类反馈',tf_forecast:'周期预测'},
+  types:{market_data:'数据采集',ai_infer:'AI 推理',signal_verify:'信号验证',market:'数据市场',chain_tvl:'公链TVL',funding_rate:'资金费率',liquidation:'全网爆仓',feedback:'人类反馈',tf_forecast:'周期预测',etf_flow:'ETF资金流'},
+  kinds:{oracle_price:'预言机喂价',ai_signal:'AI 信号',prediction:'预测裁定',market_sale:'市场成交',chain_tvl:'公链TVL',funding_rate:'资金费率',liquidation:'全网爆仓',human_feedback:'人类反馈',tf_forecast:'周期预测',etf_flow:'ETF资金流'},
   tfAccHint:'分周期胜率：',
   regimes:{'Bulldozer':'🚜 推土机','Distribution':'📉 出货','Range':'震荡','Bulldozer Long':'推土机多头','Bulldozer Short':'推土机出货','Whale Accumulation':'庄家吸筹','Whale Distribution':'庄家派发'},
   basisPush:'LGAI 推送',basisOhlcv:'OHLCV 回退',
@@ -461,7 +463,10 @@ async function refresh(){
     // market context: heat board merged with funding & liquidation consensus feeds
     const cx=d.context;
     if(cx){
-      $('ctxSum').textContent=cx.tvl?t.ctxTvl(cx.tvl):t.eCtx;
+      const sumParts=[];
+      if(cx.tvl)sumParts.push(t.ctxTvl(cx.tvl));
+      for(const e of (cx.etf||[]))sumParts.push(`<span style="color:${e.netM>0?'#34d399':'#f87171'};font-weight:800">${t.ctxEtf(e)}</span>`);
+      $('ctxSum').innerHTML=sumParts.length?sumParts.join(' · '):t.eCtx;
       const fmap=Object.fromEntries((cx.funding||[]).map(f=>[f.symbol,f]));
       const lmap=Object.fromEntries((cx.liq||[]).map(l=>[l.symbol,l]));
       $('ctx').innerHTML=(cx.heat&&cx.heat.length)?cx.heat.map((h,i)=>{

@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-const VERSION = '0.9.0';
+const VERSION = '0.10.0';
 
 // ---------------- args ----------------
 const args = process.argv.slice(2);
@@ -276,6 +276,37 @@ function inferScore(candles) {
   };
 }
 
+// ETF daily net flow ($M): Farside public tables (no key). Latest dated row,
+// last numeric column = day's total net flow; "(x)" means negative.
+async function getEtfFlow(asset) {
+  if (MOCK) return { netM: +mockCtx('etf' + asset, -150, 400).toFixed(1), day: new Date().toISOString().slice(0, 10), source: 'mock' };
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 12_000);
+  let html;
+  try {
+    const res = await fetch(`https://farside.co.uk/${asset.toLowerCase()}/`, {
+      signal: ctl.signal, headers: { 'user-agent': 'Mozilla/5.0 (LGAI-Node)' },
+    });
+    if (!res.ok) throw new Error('http ' + res.status);
+    html = await res.text();
+  } finally { clearTimeout(t); }
+  const rows = html.match(/<tr[^>]*>[\s\S]*?<\/tr>/g) || [];
+  let latest = null;
+  for (const row of rows) {
+    const cells = [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g)]
+      .map(m => m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim());
+    if (!cells.length || !/^\d{1,2} \w{3} \d{4}$/.test(cells[0])) continue;  // dated data rows only
+    const nums = cells.slice(1).map(c => {
+      const neg = /^\(.*\)$/.test(c);
+      const v = parseFloat(c.replace(/[(),$]/g, ''));
+      return Number.isFinite(v) ? (neg ? -v : v) : null;
+    }).filter(v => v != null);
+    if (nums.length) latest = { day: cells[0], netM: nums[nums.length - 1] };  // last column = total
+  }
+  if (!latest) throw new Error('ETF flow table not found (source layout changed?)');
+  return { day: latest.day, netM: +latest.netM.toFixed(1), source: 'farside' };
+}
+
 // ---------------- Chan theory (缠论) lite ----------------
 // Simplified pipeline: inclusion merge (包含处理) -> fractals (分型) -> strokes (笔)
 // -> pivot (中枢 = overlap of the last 3 strokes) -> signals:
@@ -435,6 +466,7 @@ async function execTask(t) {
   if (t.type === 'chain_tvl') return await getChainTvl();
   if (t.type === 'funding_rate') return await getFundingRate(t.symbol);
   if (t.type === 'liquidation') return await getLiquidations(t.symbol, t.payload.windowMin || 60);
+  if (t.type === 'etf_flow') return await getEtfFlow(t.payload.asset || t.symbol);
   // Multi-timeframe forecast (v0.9.0): Chan signals first, AI composite score as fallback
   if (t.type === 'tf_forecast') {
     const iv = t.payload.interval || '1h';
@@ -456,7 +488,7 @@ async function execTask(t) {
 const TYPE_LABEL = {
   market_data: 'Market Data', ai_infer: 'AI Inference', signal_verify: 'Signal Verify',
   chain_tvl: 'Chain TVL', funding_rate: 'Funding Rate', liquidation: 'Liquidations',
-  tf_forecast: 'TF Forecast',
+  tf_forecast: 'TF Forecast', etf_flow: 'ETF Flow',
 };
 let done = 0, points = 0;
 
@@ -476,6 +508,7 @@ async function pollOnce() {
         : t.type === 'funding_rate' ? `rate=${(data.rate * 100).toFixed(4)}%/8h (${data.source})`
         : t.type === 'liquidation' ? `long $${Math.round(data.longUsd / 1e3)}k / short $${Math.round(data.shortUsd / 1e3)}k, ${data.count} orders (${data.source})`
         : t.type === 'tf_forecast' ? `${data.interval} ${data.dir || 'NEUTRAL'} [${data.signal}]${data.pivot ? ` pivot ${data.pivot.lo}~${data.pivot.hi}` : ''} (${data.source})`
+        : t.type === 'etf_flow' ? `${t.symbol} ETF net ${data.netM > 0 ? '+' : ''}$${data.netM}M (${data.day}, ${data.source})`
           : `verdict=${data.verdict} @ ${data.price1}`;
       log(green('✓'), label, dim(detail));
     } catch (e) {

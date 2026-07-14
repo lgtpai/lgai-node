@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.9.0';
+const VERSION = '0.10.0';
 const PORT = +(process.env.PORT || 18402);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const TICK_MS = +(process.env.TICK_MS || 45_000);       // task generation interval
@@ -23,7 +23,7 @@ const HORIZON_MIN = +(process.env.HORIZON_MIN || 15);   // prediction verificati
 const SYMBOLS = (process.env.SYMBOLS || 'BTCUSDT,ETHUSDT,SOLUSDT').split(',').map(s => s.trim());
 const ONLINE_MS = 90_000;       // offline after missed heartbeats
 const LEASE_MS = +(process.env.LEASE_MS || 5 * 60_000); // task lease
-const POINTS = { market_data: 5, ai_infer: 8, signal_verify: 10, chain_tvl: 6, funding_rate: 6, liquidation: 7, tf_forecast: 9 };
+const POINTS = { market_data: 5, ai_infer: 8, signal_verify: 10, chain_tvl: 6, funding_rate: 6, liquidation: 7, tf_forecast: 9, etf_flow: 6 };
 
 // ---------------- state ----------------
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
@@ -42,15 +42,15 @@ let S = {
   sentiment: {},    // symbol -> [{userId, dir, ts}] human market sentiment votes
   lgai: {},         // symbol -> bulldozer trend derived from proprietary LGAI push data (optional)
   srcStats: {},     // prediction-basis source -> {wins, losses} (trust ledger per source)
-  context: { tvl: null, tvlHist: [], funding: {}, liq: {} }, // market context from node tasks (TVL / funding / liquidations)
+  context: { tvl: null, tvlHist: [], funding: {}, liq: {}, etf: {} }, // market context from node tasks (TVL / funding / liquidations / ETF flows)
   stats: { tasksCompleted: 0, pointsIssued: 0, wins: 0, losses: 0, marketVolume: 0, humanWins: 0, humanLosses: 0, disputesUpheld: 0, disputesRejected: 0 },
 };
 function load() {
   try { S = { ...S, ...JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) }; }
   catch { /* fresh start */ }
   // migrate states saved by pre-0.8.0 coordinators
-  S.context ||= { tvl: null, tvlHist: [], funding: {}, liq: {} };
-  S.context.tvlHist ||= []; S.context.funding ||= {}; S.context.liq ||= {};
+  S.context ||= { tvl: null, tvlHist: [], funding: {}, liq: {}, etf: {} };
+  S.context.tvlHist ||= []; S.context.funding ||= {}; S.context.liq ||= {}; S.context.etf ||= {};
 }
 let saveTimer = null;
 function save() {
@@ -280,7 +280,8 @@ const universe = () => [...SYMBOLS, ...dynSyms];
 // multi-node consensus feeds become confidence modifiers on network predictions,
 // aligning or vetoing calls against funding crowding / liquidation cascades / TVL flow.
 const CTX_FRESH_MS = 30 * 60_000;   // funding & liquidation feeds considered fresh
-const CTX_EVERY = { chain_tvl: 10 * 60_000, funding_rate: 15 * 60_000, liquidation: 10 * 60_000 };
+const CTX_EVERY = { chain_tvl: 10 * 60_000, funding_rate: 15 * 60_000, liquidation: 10 * 60_000, etf_flow: 60 * 60_000 };
+const ETF_ASSETS = ['BTC', 'ETH'];   // spot-ETF assets (daily flow data -> hourly refresh is plenty)
 const HEAT_TOP_FUNDING = 6;         // hottest N projects receive funding-rate tasks
 const ctxLast = {};                 // task key -> last issue ts
 
@@ -324,6 +325,16 @@ function ctxAdjust(symbol, dir) {
     if (tv.chgPct >= 1) { adj += dir === 'LONG' ? +0.03 : -0.03; notes.push(`TVL +${tv.chgPct}%`); }
     else if (tv.chgPct <= -1) { adj += dir === 'LONG' ? -0.03 : +0.03; notes.push(`TVL ${tv.chgPct}%`); }
   }
+  // ETF flows (v0.10.0): spot ETF daily net inflow is institutional money on/off.
+  // Own asset (BTC/ETH) gets the full effect; everything else gets half as a
+  // market-wide risk-appetite proxy (BTC flows lead the whole market).
+  const asset = symbol.replace(/USDT$/, '');
+  const e = S.context.etf[asset] || S.context.etf.BTC;
+  if (e && now() - e.ts < 26 * 3600_000 && Math.abs(e.netM) >= 100) {
+    const mag = e.asset === asset ? 0.05 : 0.02;
+    adj += (e.netM > 0) === (dir === 'LONG') ? +mag : -mag;
+    notes.push(`${e.asset} ETF ${e.netM > 0 ? '+' : ''}${e.netM}M/d`);
+  }
   return { adj: Math.max(-0.2, Math.min(0.12, adj)), notes };
 }
 // Confidence below this after context adjustment -> the prediction is vetoed outright
@@ -340,6 +351,9 @@ function scheduleContextTasks(red) {
   }
   for (const sym of SYMBOLS) {
     if (due('liquidation:' + sym) && !pending('liquidation', sym)) { createTask('liquidation', sym, { windowMin: 60 }, red); ctxLast['liquidation:' + sym] = now(); }
+  }
+  for (const asset of ETF_ASSETS) {
+    if (due('etf_flow:' + asset) && !pending('etf_flow', asset)) { createTask('etf_flow', asset, { asset }, red); ctxLast['etf_flow:' + asset] = now(); }
   }
 }
 
@@ -576,6 +590,19 @@ function finalize(t) {
     }
     const rec = archivePut('liquidation', { symbol: t.symbol, longUsd: Math.round(midL), shortUsd: Math.round(midS), contributors: ok.length });
     S.context.liq[t.symbol] = { symbol: t.symbol, longUsd: Math.round(midL), shortUsd: Math.round(midS), ts: now(), contributors: ok.length, proof: rec.txid };
+  } else if (t.type === 'etf_flow') {
+    // Spot ETF daily net flow consensus ($M): median, tolerance max($20M, 10%)
+    const vals = entries.map(([, r]) => +r.netM).filter(Number.isFinite);
+    if (!vals.length) { t.status = 'expired'; return; }
+    const mid = median(vals);
+    const tol = Math.max(20, Math.abs(mid) * 0.1);
+    for (const [nid, r] of entries) {
+      if (Number.isFinite(+r.netM) && Math.abs(+r.netM - mid) <= tol) award(nid, t, POINTS.etf_flow, `${t.symbol} ETF ${+r.netM > 0 ? '+' : ''}${(+r.netM).toFixed(0)}M consensus ok`);
+      else strike(nid, t, `ETF flow deviates from consensus`);
+    }
+    const best = (entries.find(([, r]) => Number.isFinite(+r.netM) && Math.abs(+r.netM - mid) <= tol) || entries[0])[1];
+    const rec = archivePut('etf_flow', { asset: t.symbol, netM: +mid.toFixed(1), day: best.day, contributors: entries.length });
+    S.context.etf[t.symbol] = { asset: t.symbol, netM: +mid.toFixed(1), day: best.day, ts: now(), contributors: entries.length, proof: rec.txid, source: best.source };
   } else if (t.type === 'tf_forecast') {
     // Multi-timeframe forecast: reputation-weighted direction consensus across nodes
     let wL = 0, wS = 0, wT = 0; const sigs = {};
@@ -869,6 +896,7 @@ const server = http.createServer(async (req, res) => {
           tvl: S.context.tvl,
           funding: Object.values(S.context.funding).filter(f => now() - f.ts < 2 * 3600_000),
           liq: Object.values(S.context.liq).filter(q => now() - q.ts < 2 * 3600_000),
+          etf: Object.values(S.context.etf).filter(e => now() - e.ts < 26 * 3600_000),
           heat: heatBoard().slice(0, 10),
         },
         universe: { core: SYMBOLS, dynamic: dynSyms, total: universe().length },
