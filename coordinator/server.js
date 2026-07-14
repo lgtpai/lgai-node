@@ -390,7 +390,8 @@ function scheduleForecastTasks(red) {
 }
 
 function maybeCreatePrediction(symbol) {
-  const open = S.predictions.some(p => p.symbol === symbol && (p.status === 'open' || p.status === 'verifying'));
+  // dedupe against the main flow only — timeframe forecasts (p.tf) live in their own lane
+  const open = S.predictions.some(p => p.symbol === symbol && !p.tf && (p.status === 'open' || p.status === 'verifying'));
   const hist = S.marketHistory[symbol] || [];
   if (open || hist.length < 12 || Math.random() > 0.5) return;
   const last = hist[hist.length - 1].close;
@@ -682,7 +683,7 @@ function tick() {
       const g = S.lgai[sym];
       if (!g || !g.dir) continue;
       if ((S.marketHistory[sym] || []).length >= 12) continue; // market-data flow covers these
-      if (S.predictions.some(p => p.symbol === sym && (p.status === 'open' || p.status === 'verifying'))) continue;
+      if (S.predictions.some(p => p.symbol === sym && !p.tf && (p.status === 'open' || p.status === 'verifying'))) continue;
       if (Math.random() > 0.4) continue;
       const hs = weightedSentiment(sym);
       const disputed = !!hs.dir && hs.dir !== g.dir;
