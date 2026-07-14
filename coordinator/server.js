@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.8.0';
+const VERSION = '0.9.0';
 const PORT = +(process.env.PORT || 18402);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const TICK_MS = +(process.env.TICK_MS || 45_000);       // task generation interval
@@ -23,7 +23,7 @@ const HORIZON_MIN = +(process.env.HORIZON_MIN || 15);   // prediction verificati
 const SYMBOLS = (process.env.SYMBOLS || 'BTCUSDT,ETHUSDT,SOLUSDT').split(',').map(s => s.trim());
 const ONLINE_MS = 90_000;       // offline after missed heartbeats
 const LEASE_MS = +(process.env.LEASE_MS || 5 * 60_000); // task lease
-const POINTS = { market_data: 5, ai_infer: 8, signal_verify: 10, chain_tvl: 6, funding_rate: 6, liquidation: 7 };
+const POINTS = { market_data: 5, ai_infer: 8, signal_verify: 10, chain_tvl: 6, funding_rate: 6, liquidation: 7, tf_forecast: 9 };
 
 // ---------------- state ----------------
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
@@ -120,7 +120,7 @@ function strike(nodeId, task, note) {
 // ---- PoI trust loop: prediction trustworthiness earned from verified outcomes ----
 // Every prediction records its basis source; resolved outcomes accumulate a per-source
 // win/loss ledger. Trust = Laplace-smoothed win rate (unproven sources start at 0.5).
-const SRC_LABEL = { lgai_push: 'LGAI push', ai: 'AI ensemble', human: 'Human sentiment', sma: 'SMA momentum' };
+const SRC_LABEL = { lgai_push: 'LGAI push', ai: 'AI ensemble', human: 'Human sentiment', sma: 'SMA momentum', chan: 'Chan signals', tf_ai: 'TF AI forecast' };
 function srcTrust(src) {
   const s = S.srcStats[src] || { wins: 0, losses: 0 };
   return (s.wins + 1) / (s.wins + s.losses + 2);
@@ -343,6 +343,38 @@ function scheduleContextTasks(red) {
   }
 }
 
+// ---- Multi-timeframe forecast tasks (v0.9.0): Chan-theory signals across 15m/1h/4h/1d ----
+// Nodes fetch candles of the given timeframe, run local Chan analysis (inclusion merge ->
+// fractals -> strokes -> pivot -> 3rd buy/sell, 1st buy/sell divergence) plus the AI composite
+// score, and return a direction forecast. Weighted consensus (>= 2/3 by reputation tier)
+// becomes a network prediction with the horizon matched to the timeframe.
+const TIMEFRAMES = [
+  { iv: '15m', horizon: 30, every: 10 * 60_000 },
+  { iv: '1h', horizon: 120, every: 30 * 60_000 },
+  { iv: '4h', horizon: 480, every: 2 * 3600_000 },
+  { iv: '1d', horizon: 1440, every: 6 * 3600_000 },
+];
+const HEAT_TOP_FORECAST = 3;   // hottest N projects join the core symbols in forecast rounds
+const SIG_LABEL = {
+  chan_3buy: 'Chan 3rd buy (三买)', chan_3sell: 'Chan 3rd sell (三卖)',
+  chan_1buy_div: 'Chan 1st buy divergence (一买背驰)', chan_1sell_div: 'Chan 1st sell divergence (一卖背驰)',
+};
+function scheduleForecastTasks(red) {
+  const targets = new Set([...SYMBOLS, ...heatBoard().slice(0, HEAT_TOP_FORECAST).map(h => h.symbol)]);
+  for (const sym of targets) {
+    for (const tf of TIMEFRAMES) {
+      const key = `tf:${sym}:${tf.iv}`;
+      if (now() - (ctxLast[key] || 0) < tf.every) continue;
+      const pend = Object.values(S.tasks).some(t => t.type === 'tf_forecast' && t.symbol === sym
+        && t.payload.interval === tf.iv && t.status !== 'done' && t.status !== 'expired');
+      const open = S.predictions.some(p => p.symbol === sym && p.tf === tf.iv && (p.status === 'open' || p.status === 'verifying'));
+      if (pend || open) continue;
+      createTask('tf_forecast', sym, { interval: tf.iv, horizonMin: tf.horizon }, red);
+      ctxLast[key] = now();
+    }
+  }
+}
+
 function maybeCreatePrediction(symbol) {
   const open = S.predictions.some(p => p.symbol === symbol && (p.status === 'open' || p.status === 'verifying'));
   const hist = S.marketHistory[symbol] || [];
@@ -544,6 +576,54 @@ function finalize(t) {
     }
     const rec = archivePut('liquidation', { symbol: t.symbol, longUsd: Math.round(midL), shortUsd: Math.round(midS), contributors: ok.length });
     S.context.liq[t.symbol] = { symbol: t.symbol, longUsd: Math.round(midL), shortUsd: Math.round(midS), ts: now(), contributors: ok.length, proof: rec.txid };
+  } else if (t.type === 'tf_forecast') {
+    // Multi-timeframe forecast: reputation-weighted direction consensus across nodes
+    let wL = 0, wS = 0, wT = 0; const sigs = {};
+    for (const [nid, r] of entries) {
+      const n = S.nodes[nid];
+      const w = n ? TIER_MULT[tierOf(n)] : 1;
+      wT += w;
+      if (r.dir === 'LONG') wL += w; else if (r.dir === 'SHORT') wS += w;
+      if (r.signal) sigs[r.signal] = (sigs[r.signal] || 0) + 1;
+    }
+    const majDir = wL >= wS ? 'LONG' : 'SHORT';
+    const majW = Math.max(wL, wS);
+    const strong = wT > 0 && (wL + wS) > 0 && majW / wT >= 0.67;
+    for (const [nid, r] of entries) {
+      if (r.dir === majDir && strong) award(nid, t, POINTS.tf_forecast, `${t.payload.interval} forecast ${r.dir} (${r.signal || 'ai'}) consensus`);
+      else if (r.dir == null || !strong) award(nid, t, Math.round(POINTS.tf_forecast / 3), `${t.payload.interval} forecast ${r.dir || 'neutral'} (no strong consensus)`);
+      else strike(nid, t, `${t.payload.interval} forecast ${r.dir} vs consensus ${majDir}`);
+    }
+    // Strong consensus -> network prediction with the timeframe's own horizon
+    if (strong) {
+      const tf = t.payload.interval;
+      const px = median(entries.map(([, r]) => +r.price).filter(Number.isFinite));
+      const openTf = S.predictions.some(p => p.symbol === t.symbol && p.tf === tf && (p.status === 'open' || p.status === 'verifying'));
+      if (!openTf && Number.isFinite(px)) {
+        const topSig = Object.entries(sigs).filter(([s]) => s.startsWith('chan_')).sort((a, b) => b[1] - a[1])[0];
+        const src = topSig ? 'chan' : 'tf_ai';
+        const hs = weightedSentiment(t.symbol);
+        const disputed = !!hs.dir && hs.dir !== majDir;
+        const ctx = ctxAdjust(t.symbol, majDir);
+        const conf = +Math.max(0.05, Math.min(0.95,
+          predConfidence(src, { humanAgree: hs.dir === majDir, disputed }) + ctx.adj)).toFixed(2);
+        if (conf >= CTX_VETO_CONF) {
+          const basis = `${tf} ${topSig ? SIG_LABEL[topSig[0]] || topSig[0] : 'AI forecast'} (${entries.length}-node)`
+            + (hs.dir === majDir ? ' + human consensus' : '')
+            + (ctx.notes.length ? ` | ctx: ${ctx.notes.join(', ')}` : '');
+          archivePut('tf_forecast', { symbol: t.symbol, tf, dir: majDir, signal: topSig ? topSig[0] : 'ai', contributors: entries.length });
+          S.predictions.unshift({
+            id: uid(), symbol: t.symbol, dir: majDir, src, tf, confidence: conf,
+            disputed: disputed || undefined, basis, price0: px, createdAt: now(),
+            horizonMin: t.payload.horizonMin || HORIZON_MIN, status: 'open',
+          });
+          S.predictions = S.predictions.slice(0, 120);
+          log(`[pred] ${t.symbol} ${majDir} @${px} tf=${tf} conf=${conf} basis=${basis}`);
+        } else {
+          log(`[pred] ${t.symbol} ${majDir} tf=${tf} vetoed by market context (${ctx.notes.join('; ') || 'low confidence'})`);
+        }
+      }
+    }
   }
   t.status = 'done'; t.doneAt = now();
   S.stats.tasksCompleted += 1;
@@ -557,6 +637,8 @@ function tick() {
     const red = Math.min(3, online.length);
     // Market-context tasks (heat-ranked): chain TVL / funding rates / liquidations
     scheduleContextTasks(red);
+    // Multi-timeframe forecast tasks (Chan signals, 15m/1h/4h/1d)
+    scheduleForecastTasks(red);
     // Trading universe = core symbols + every trending pushed project.
     // Circuit-broken symbols get a 10% probation retry so a temporary outage doesn't kill them forever.
     for (const sym of universe()) {
@@ -766,6 +848,15 @@ const server = http.createServer(async (req, res) => {
         humanAccuracy: (S.stats.humanWins + S.stats.humanLosses)
           ? +(S.stats.humanWins / (S.stats.humanWins + S.stats.humanLosses) * 100).toFixed(1) : null,
         srcTrust: srcTrustAll(),
+        tfAcc: (() => {   // per-timeframe verified accuracy of tf_forecast predictions
+          const m = {};
+          for (const p of S.predictions) {
+            if (!p.tf || (p.status !== 'win' && p.status !== 'loss')) continue;
+            const a = (m[p.tf] ||= { wins: 0, losses: 0 });
+            a[p.status === 'win' ? 'wins' : 'losses'] += 1;
+          }
+          return m;
+        })(),
         disputes: { upheld: S.stats.disputesUpheld || 0, rejected: S.stats.disputesRejected || 0 },
         sentiment: Object.fromEntries(universe().map(sym => {
           const arr = (S.sentiment[sym] || []).filter(v => now() - v.ts < 60 * 60_000);

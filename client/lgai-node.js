@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-const VERSION = '0.8.0';
+const VERSION = '0.9.0';
 
 // ---------------- args ----------------
 const args = process.argv.slice(2);
@@ -110,7 +110,8 @@ async function getCandles(symbol, limit = 40, interval = '5m') {
     return { candles: k.map(r => ({ c: +r[4], h: +r[2], l: +r[3], v: +r[5] })), source: 'binance' };
   } catch { }
   try {
-    const k = await fetchJson(`https://www.okx.com/api/v5/market/candles?instId=${toOkx(symbol)}&bar=${interval}&limit=${limit}`);
+    const okxBar = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1H', '4h': '4H', '1d': '1D' }[interval] || interval;
+    const k = await fetchJson(`https://www.okx.com/api/v5/market/candles?instId=${toOkx(symbol)}&bar=${okxBar}&limit=${limit}`);
     return { candles: k.data.map(r => ({ c: +r[4], h: +r[2], l: +r[3], v: +r[5] })).reverse(), source: 'okx' };
   } catch { }
   throw new Error('all market data sources unavailable (use --mock for testing)');
@@ -275,6 +276,70 @@ function inferScore(candles) {
   };
 }
 
+// ---------------- Chan theory (缠论) lite ----------------
+// Simplified pipeline: inclusion merge (包含处理) -> fractals (分型) -> strokes (笔)
+// -> pivot (中枢 = overlap of the last 3 strokes) -> signals:
+//   chan_3buy / chan_3sell        escaped the pivot and the pullback held outside it (三买/三卖)
+//   chan_1buy_div / chan_1sell_div new extreme with momentum divergence, MACD-lite (一买/一卖背驰)
+function chanSignal(ks) {
+  if (!ks || ks.length < 20) return null;
+  // inclusion merge
+  const m = [];
+  for (const k of ks) {
+    const last = m[m.length - 1];
+    if (last && ((k.h <= last.h && k.l >= last.l) || (k.h >= last.h && k.l <= last.l))) {
+      const up = m.length < 2 || last.h >= m[m.length - 2].h;
+      last.h = up ? Math.max(last.h, k.h) : Math.min(last.h, k.h);
+      last.l = up ? Math.max(last.l, k.l) : Math.min(last.l, k.l);
+      last.c = k.c;
+    } else m.push({ h: k.h, l: k.l, c: k.c });
+  }
+  if (m.length < 7) return null;
+  // fractals
+  const fr = [];
+  for (let i = 1; i < m.length - 1; i++) {
+    if (m[i].h > m[i - 1].h && m[i].h > m[i + 1].h) fr.push({ i, t: 'top', px: m[i].h });
+    else if (m[i].l < m[i - 1].l && m[i].l < m[i + 1].l) fr.push({ i, t: 'bot', px: m[i].l });
+  }
+  // strokes: alternating fractals with >= 4 merged candles between them
+  const st = [];
+  for (const f of fr) {
+    const last = st[st.length - 1];
+    if (!last) { st.push(f); continue; }
+    if (f.t === last.t) {   // same type: keep the more extreme fractal
+      if ((f.t === 'top' && f.px > last.px) || (f.t === 'bot' && f.px < last.px)) st[st.length - 1] = f;
+    } else if (f.i - last.i >= 4) st.push(f);
+  }
+  if (st.length < 4) return null;
+  // pivot: overlap of the last 3 completed strokes
+  const seg = st.slice(-4);
+  const his = [], los = [];
+  for (let i = 0; i < 3; i++) {
+    his.push(Math.max(seg[i].px, seg[i + 1].px));
+    los.push(Math.min(seg[i].px, seg[i + 1].px));
+  }
+  const zg = Math.min(...his), zd = Math.max(...los);
+  const pivot = zg > zd ? { hi: +zg.toPrecision(8), lo: +zd.toPrecision(8) } : null;
+  const last = m[m.length - 1].c;
+  const lastF = st[st.length - 1];
+  // 三买/三卖
+  if (pivot) {
+    if (last > pivot.hi && lastF.t === 'bot' && lastF.px > pivot.hi) return { dir: 'LONG', signal: 'chan_3buy', pivot };
+    if (last < pivot.lo && lastF.t === 'top' && lastF.px < pivot.lo) return { dir: 'SHORT', signal: 'chan_3sell', pivot };
+  }
+  // 一买/一卖背驰: new extreme + momentum divergence (MACD-lite histogram)
+  const closes = ks.map(k => k.c);
+  const ema = n => { let e = closes[0]; const out = [e]; const kf = 2 / (n + 1); for (let i = 1; i < closes.length; i++) { e = closes[i] * kf + e * (1 - kf); out.push(e); } return out; };
+  const e12 = ema(12), e26 = ema(26);
+  const hist = closes.map((_, i) => e12[i] - e26[i]);
+  const lows = ks.map(k => k.l), highs = ks.map(k => k.h), n = ks.length;
+  const prevLow = Math.min(...lows.slice(0, n - 5)), prevHigh = Math.max(...highs.slice(0, n - 5));
+  const h5 = hist.slice(-5), hPrev = hist.slice(0, -5);
+  if (Math.min(...lows.slice(-5)) < prevLow && Math.min(...h5) > Math.min(...hPrev)) return { dir: 'LONG', signal: 'chan_1buy_div', pivot };
+  if (Math.max(...highs.slice(-5)) > prevHigh && Math.max(...h5) < Math.max(...hPrev)) return { dir: 'SHORT', signal: 'chan_1sell_div', pivot };
+  return pivot ? { dir: null, signal: 'chan_pivot', pivot } : null;
+}
+
 // ---------------- push-data inference (primary model) ----------------
 // The AI regime call runs on the LGAI push series (network-wide holding-cost pushes),
 // NOT on candle indicators / RSI. Four states are judged straight from the push series,
@@ -370,12 +435,28 @@ async function execTask(t) {
   if (t.type === 'chain_tvl') return await getChainTvl();
   if (t.type === 'funding_rate') return await getFundingRate(t.symbol);
   if (t.type === 'liquidation') return await getLiquidations(t.symbol, t.payload.windowMin || 60);
+  // Multi-timeframe forecast (v0.9.0): Chan signals first, AI composite score as fallback
+  if (t.type === 'tf_forecast') {
+    const iv = t.payload.interval || '1h';
+    const { candles, source } = await getCandles(t.symbol, 80, iv);
+    const chan = chanSignal(candles);
+    const ai = inferScore(candles);
+    const dir = chan && chan.dir ? chan.dir
+      : (Math.abs(ai.score) >= 0.15 ? (ai.score > 0 ? 'LONG' : 'SHORT') : null);
+    return {
+      dir, interval: iv, score: ai.score,
+      signal: (chan && chan.dir) ? chan.signal : (dir ? 'ai_score' : 'no_signal'),
+      pivot: chan ? chan.pivot : null,
+      price: candles[candles.length - 1].c, source,
+    };
+  }
   throw new Error('unknown task type ' + t.type);
 }
 
 const TYPE_LABEL = {
   market_data: 'Market Data', ai_infer: 'AI Inference', signal_verify: 'Signal Verify',
   chain_tvl: 'Chain TVL', funding_rate: 'Funding Rate', liquidation: 'Liquidations',
+  tf_forecast: 'TF Forecast',
 };
 let done = 0, points = 0;
 
@@ -394,6 +475,7 @@ async function pollOnce() {
         : t.type === 'chain_tvl' ? `TVL $${data.totalB}B (${data.source})`
         : t.type === 'funding_rate' ? `rate=${(data.rate * 100).toFixed(4)}%/8h (${data.source})`
         : t.type === 'liquidation' ? `long $${Math.round(data.longUsd / 1e3)}k / short $${Math.round(data.shortUsd / 1e3)}k, ${data.count} orders (${data.source})`
+        : t.type === 'tf_forecast' ? `${data.interval} ${data.dir || 'NEUTRAL'} [${data.signal}]${data.pivot ? ` pivot ${data.pivot.lo}~${data.pivot.hi}` : ''} (${data.source})`
           : `verdict=${data.verdict} @ ${data.price1}`;
       log(green('✓'), label, dim(detail));
     } catch (e) {

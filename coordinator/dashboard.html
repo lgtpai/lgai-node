@@ -221,8 +221,9 @@ en:{
   kindLgai:'LGAI exclusive',
   online:'Online',offline:'Offline',
   tiers:{gold:'Gold',silver:'Silver',bronze:'Bronze'},
-  types:{market_data:'Data',ai_infer:'AI Inference',signal_verify:'Verify',market:'Marketplace',chain_tvl:'Chain TVL',funding_rate:'Funding',liquidation:'Liquidations',feedback:'Feedback'},
-  kinds:{oracle_price:'Oracle price',ai_signal:'AI signal',prediction:'Prediction verdict',market_sale:'Market sale',chain_tvl:'Chain TVL',funding_rate:'Funding rate',liquidation:'Liquidations',human_feedback:'Human feedback'},
+  types:{market_data:'Data',ai_infer:'AI Inference',signal_verify:'Verify',market:'Marketplace',chain_tvl:'Chain TVL',funding_rate:'Funding',liquidation:'Liquidations',feedback:'Feedback',tf_forecast:'TF Forecast'},
+  kinds:{oracle_price:'Oracle price',ai_signal:'AI signal',prediction:'Prediction verdict',market_sale:'Market sale',chain_tvl:'Chain TVL',funding_rate:'Funding rate',liquidation:'Liquidations',human_feedback:'Human feedback',tf_forecast:'TF forecast'},
+  tfAccHint:'By timeframe:',
   regimes:{'Bulldozer':'Bulldozer','Distribution':'Distribution','Range':'Range'},
   basisPush:'LGAI push',basisOhlcv:'OHLCV',
   status:{win:'WIN ✓',loss:'LOSS ✗',open:'Open',verifying:'Verifying'},
@@ -231,7 +232,7 @@ en:{
   joinName:'Join as a human verifier — pick a nickname:',
   votes:'votes',human:'HUMAN',
   trustHint:'Source trust (verified win rate):',
-  srcNames:{lgai_push:'LGAI push',ai:'AI ensemble',human:'Human sentiment',sma:'SMA'},
+  srcNames:{lgai_push:'LGAI push',ai:'AI ensemble',human:'Human sentiment',sma:'SMA',chan:'Chan signals',tf_ai:'TF AI'},
   disputes:(u,r)=>`Human disputes: upheld ${u} / rejected ${r}`,
   disputedTag:'⚠ disputed',
   fbTypes:{signal:'rated signal',prediction:'called',sentiment:'sentiment'},
@@ -268,8 +269,9 @@ zh:{
   kindLgai:'LGAI 独家',
   online:'在线',offline:'离线',
   tiers:{gold:'金',silver:'银',bronze:'铜'},
-  types:{market_data:'数据采集',ai_infer:'AI 推理',signal_verify:'信号验证',market:'数据市场',chain_tvl:'公链TVL',funding_rate:'资金费率',liquidation:'全网爆仓',feedback:'人类反馈'},
-  kinds:{oracle_price:'预言机喂价',ai_signal:'AI 信号',prediction:'预测裁定',market_sale:'市场成交',chain_tvl:'公链TVL',funding_rate:'资金费率',liquidation:'全网爆仓',human_feedback:'人类反馈'},
+  types:{market_data:'数据采集',ai_infer:'AI 推理',signal_verify:'信号验证',market:'数据市场',chain_tvl:'公链TVL',funding_rate:'资金费率',liquidation:'全网爆仓',feedback:'人类反馈',tf_forecast:'周期预测'},
+  kinds:{oracle_price:'预言机喂价',ai_signal:'AI 信号',prediction:'预测裁定',market_sale:'市场成交',chain_tvl:'公链TVL',funding_rate:'资金费率',liquidation:'全网爆仓',human_feedback:'人类反馈',tf_forecast:'周期预测'},
+  tfAccHint:'分周期胜率：',
   regimes:{'Bulldozer':'🚜 推土机','Distribution':'📉 出货','Range':'震荡','Bulldozer Long':'推土机多头','Bulldozer Short':'推土机出货','Whale Accumulation':'庄家吸筹','Whale Distribution':'庄家派发'},
   basisPush:'LGAI 推送',basisOhlcv:'OHLCV 回退',
   status:{win:'WIN ✓',loss:'LOSS ✗',open:'进行中',verifying:'验证中'},
@@ -278,7 +280,7 @@ zh:{
   joinName:'以人类验证者身份加入 —— 取个昵称：',
   votes:'票',human:'人类',
   trustHint:'依据源可信度（实测胜率）：',
-  srcNames:{lgai_push:'LGAI 推送',ai:'AI 集成',human:'人类情绪',sma:'SMA 动量'},
+  srcNames:{lgai_push:'LGAI 推送',ai:'AI 集成',human:'人类情绪',sma:'SMA 动量',chan:'缠论信号',tf_ai:'周期 AI'},
   disputes:(u,r)=>`人类异议：判对 ${u} / 误判 ${r}`,
   disputedTag:'⚠ 人类异议',
   fbTypes:{signal:'评价信号',prediction:'判断预测',sentiment:'市场情绪'},
@@ -407,7 +409,16 @@ async function refresh(){
         return `${t.srcNames[src]||src} <b style="color:${col}">${rate}</b> <span style="color:var(--dim);font-weight:600">(${s.wins||0}/${tot})</span>`;
       });
       const dp=d.disputes||{upheld:0,rejected:0};
-      $('trust').innerHTML=`<span style="color:var(--dim)">${t.trustHint}</span> ${parts.join(' · ')}`
+      let tfLine='';
+      if(d.tfAcc&&Object.keys(d.tfAcc).length){
+        const order=['15m','1h','4h','1d'];
+        const tfParts=Object.entries(d.tfAcc).sort((a,b)=>order.indexOf(a[0])-order.indexOf(b[0])).map(([tf,s])=>{
+          const tot=s.wins+s.losses,rate=tot?Math.round(s.wins/tot*100):0;
+          return `${tf} <b style="color:${rate>=55?'#34d399':rate<=45?'#f87171':'var(--muted)'}">${rate}%</b> <span style="color:var(--dim);font-weight:600">(${s.wins}/${tot})</span>`;
+        });
+        tfLine=` · <span style="color:var(--dim)">${t.tfAccHint}</span> ${tfParts.join(' ')}`;
+      }
+      $('trust').innerHTML=`<span style="color:var(--dim)">${t.trustHint}</span> ${parts.join(' · ')}`+tfLine
         +((dp.upheld+dp.rejected)?` · <span style="color:#f472b6">${t.disputes(dp.upheld,dp.rejected)}</span>`:'');
     }else $('trust').innerHTML='';
     $('preds').innerHTML=d.predictions.length?d.predictions.map(p=>{
@@ -421,7 +432,7 @@ async function refresh(){
         ?`<span class="mono" style="color:${p.confidence>=0.6?'#34d399':p.confidence<=0.4?'#f87171':'var(--muted)'};font-weight:800">${Math.round(p.confidence*100)}%</span>`
         :'—';
       return `<tr>
-      <td>${esc(p.symbol)}</td>
+      <td>${esc(p.symbol)}${p.tf?` <span class="rolepill" style="background:rgba(59,130,246,.14);color:#60a5fa">${esc(p.tf)}</span>`:''}</td>
       <td style="color:${p.dir==='LONG'?'#34d399':'#f87171'};font-weight:800">${p.dir}</td>
       <td style="font-size:11.5px">${esc(basis)}${p.disputed?` <span class="rolepill r-h">${t.disputedTag}</span>`:''}</td>
       <td>${conf}</td>
