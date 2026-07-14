@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-const VERSION = '0.4.1';
+const VERSION = '0.8.0';
 
 // ---------------- args ----------------
 const args = process.argv.slice(2);
@@ -120,6 +120,58 @@ async function getPrice(symbol) {
   return { price: candles[candles.length - 1].c, source };
 }
 
+// ---------------- market context sources (v0.8.0) ----------------
+// Deterministic mock (15s bucket): identical network-wide so mock nodes pass consensus
+function mockCtx(key, base, spread) {
+  const bucket = Math.floor(Date.now() / 15_000);
+  const h = parseInt(crypto.createHash('sha1').update(key + bucket).digest('hex').slice(0, 8), 16);
+  return base + (h % 10_000) / 10_000 * spread;
+}
+// Chain TVL: DeFiLlama public API (no key) — total across all chains + top 5
+async function getChainTvl() {
+  if (MOCK) return { totalB: +mockCtx('tvl', 95, 10).toFixed(2), top: [{ name: 'Ethereum', tvlB: 52.1 }, { name: 'Solana', tvlB: 9.3 }, { name: 'BSC', tvlB: 7.2 }], source: 'mock' };
+  const chains = await fetchJson('https://api.llama.fi/v2/chains', 12_000);
+  const totalB = chains.reduce((a, c) => a + (+c.tvl || 0), 0) / 1e9;
+  const top = [...chains].sort((a, b) => (+b.tvl || 0) - (+a.tvl || 0)).slice(0, 5)
+    .map(c => ({ name: c.name, tvlB: +((+c.tvl || 0) / 1e9).toFixed(1) }));
+  return { totalB: +totalB.toFixed(2), top, source: 'defillama' };
+}
+// Funding rate (per 8h): Binance futures premiumIndex -> OKX fallback
+async function getFundingRate(symbol) {
+  if (MOCK) return { rate: +mockCtx('fund' + symbol, -0.0002, 0.0006).toFixed(6), source: 'mock' };
+  try {
+    const r = await fetchJson(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`);
+    if (Number.isFinite(+r.lastFundingRate)) return { rate: +(+r.lastFundingRate).toFixed(6), source: 'binance' };
+  } catch { }
+  const r = await fetchJson(`https://www.okx.com/api/v5/public/funding-rate?instId=${symbol.replace(/USDT$/, '-USDT-SWAP')}`);
+  return { rate: +(+r.data[0].fundingRate).toFixed(6), source: 'okx' };
+}
+// Liquidations: OKX public liquidation orders (no key). Notional = sz × bankruptcy px —
+// contract-multiplier approximation, but every node computes identically so consensus holds.
+async function getLiquidations(symbol, windowMin = 60) {
+  if (MOCK) {
+    return {
+      longUsd: Math.round(mockCtx('liqL' + symbol, 2e6, 6e6)),
+      shortUsd: Math.round(mockCtx('liqS' + symbol, 2e6, 6e6)),
+      count: Math.round(mockCtx('liqN' + symbol, 20, 80)), source: 'mock',
+    };
+  }
+  const fam = symbol.replace(/USDT$/, '-USDT');
+  const r = await fetchJson(`https://www.okx.com/api/v5/public/liquidation-orders?instType=SWAP&state=filled&instFamily=${fam}`, 12_000);
+  const cutoff = Date.now() - windowMin * 60_000;
+  let longUsd = 0, shortUsd = 0, count = 0;
+  for (const it of r.data || []) {
+    for (const d of it.details || []) {
+      if (+d.ts < cutoff) continue;
+      const usd = (+d.sz || 0) * (+d.bkPx || 0);
+      if (d.posSide === 'long') longUsd += usd;        // longs flushed (forced sells)
+      else if (d.posSide === 'short') shortUsd += usd; // shorts squeezed (forced buys)
+      count++;
+    }
+  }
+  return { longUsd: Math.round(longUsd), shortUsd: Math.round(shortUsd), count, source: 'okx' };
+}
+
 // ---------------- local inference ----------------
 // Three base models (price-volume proxy implementation):
 //   🚜 Bulldozer Trend      >=70% one-directional closes in the window set the direction,
@@ -149,7 +201,7 @@ function inferScore(candles) {
   // --- 🚜 Bulldozer Trend ---
   const W = Math.min(14, closes.length - 1);
   let ups = 0;
-  for (let i = closes.length - W; i < closes.length; i++) if (closes[i] > closes[i - 1]) ups++;
+  for (let i = closes.length - W; i < closes.length; i++) if (closes[i] >= closes[i - 1]) ups++;  // 持平算涨(推土机口径)
   const upRatio = W ? ups / W : 0.5;
   let bulldozer;
   if (upRatio >= 0.7) bulldozer = 0.5 + (upRatio - 0.7) / 0.3 * 0.5;        // grinding up -> long
@@ -223,6 +275,76 @@ function inferScore(candles) {
   };
 }
 
+// ---------------- push-data inference (primary model) ----------------
+// The AI regime call runs on the LGAI push series (network-wide holding-cost pushes),
+// NOT on candle indicators / RSI. Four states are judged straight from the push series,
+// aligned with the main signal system (推土机 / 吸筹 / 震荡 / 出货):
+//   🚜 Bulldozer          push prices grinding one way up (>=70% rising pushes) -> hold long
+//   🧲 Whale Accumulation  holding cost parked in the low zone but carving higher-lows /
+//                          being lifted -> whales building at the bottom (吸筹)
+//   📉 Distribution        push prices grinding down (>=70% falling), OR holding cost
+//                          stalling in the high zone with lower-highs / eroding (出货)
+//   〰️ Range              no directional push flow -> stand aside (震荡)
+// Extras: structural anchor (a pullback breaking the window-low push kills the trend)
+//         and push momentum (last push vs. earlier average) as confidence modifiers.
+function inferPush(pushes) {
+  const prices = pushes.map(p => +p.price).filter(Number.isFinite);
+  const n = prices.length;
+  const last = prices[n - 1];
+  const W = Math.min(14, n - 1);
+  let ups = 0;
+  for (let i = n - W; i < n; i++) if (prices[i] >= prices[i - 1]) ups++;  // 持平算涨(推土机口径)
+  const upRatio = W ? ups / W : 0.5;
+
+  // Holding-cost structure, read straight from the push series (no candle indicators / RSI):
+  //   pricePos  = where the latest push sits within its recent range (0 = low, 1 = high)
+  //   higherLows / lowerHighs = whether recent pushes carve higher-lows (accumulation)
+  //                             or lower-highs (distribution) vs. the earlier window
+  const lo = Math.min(...prices), hi = Math.max(...prices);
+  const pricePos = hi > lo ? (last - lo) / (hi - lo) : 0.5;
+  const recent = prices.slice(-5), prior = prices.slice(-Math.min(12, n), -5);
+  const higherLows = prior.length ? Math.min(...recent) > Math.min(...prior) : false;
+  const lowerHighs = prior.length ? Math.max(...recent) < Math.max(...prior) : false;
+  const early = prices.slice(0, Math.max(2, Math.ceil(n / 2)));
+  const pushMom = last / (avg(early) || last) - 1;
+
+  let score, regime;
+  if (upRatio >= 0.7) {                    // 🚜 pushes grinding up -> bulldozer long
+    regime = 'Bulldozer'; score = 0.5 + (upRatio - 0.7) / 0.3 * 0.5;
+  } else if (upRatio <= 0.3) {             // 📉 pushes grinding down -> distribution / short
+    regime = 'Distribution'; score = -(0.5 + (0.3 - upRatio) / 0.3 * 0.5);
+  } else if (pricePos <= 0.4 && (higherLows || pushMom > 0.002)) {
+    // 🧲 holding cost parked in the low zone and being lifted -> whale accumulation (吸筹)
+    regime = 'Whale Accumulation';
+    score = clamp(0.15 + (0.4 - pricePos) * 0.5 + (higherLows ? 0.10 : 0), 0, 0.45);
+  } else if (pricePos >= 0.6 && (lowerHighs || pushMom < -0.002)) {
+    // 📉 holding cost stalling in the high zone and eroding -> distribution / topping (出货)
+    regime = 'Distribution';
+    score = -clamp(0.15 + (pricePos - 0.6) * 0.5 + (lowerHighs ? 0.10 : 0), 0, 0.45);
+  } else {                                 // 〰️ no directional push flow -> range (震荡)
+    regime = 'Range'; score = (upRatio - 0.5) * 0.8;
+  }
+
+  // Structural anchor on push prices: trend invalidated if the window anchor breaks
+  const anchorWin = prices.slice(-W - 1, -1);
+  let anchorIntact = true;
+  if (score > 0 && last < Math.min(...anchorWin)) { anchorIntact = false; score *= 0.35; }
+  if (score < 0 && last > Math.max(...anchorWin)) { anchorIntact = false; score *= 0.35; }
+
+  // Push momentum: last push vs. average of the earlier half (confidence modifier)
+  score = clamp(score + Math.tanh(pushMom * 5) * 0.15, -1, 1);
+
+  return {
+    score: +score.toFixed(4), regime,
+    features: {
+      upRatio: +upRatio.toFixed(2), anchorIntact,
+      pricePos: +pricePos.toFixed(2), higherLows, lowerHighs,
+      pushMom: +pushMom.toFixed(4), pushes: n,
+      src: 'lgai_push',
+    },
+  };
+}
+
 // ---------------- task execution ----------------
 async function execTask(t) {
   if (t.type === 'market_data') {
@@ -231,6 +353,8 @@ async function execTask(t) {
     return { close: k.c, high: k.h, low: k.l, vol: k.v, n: candles.length, source };
   }
   if (t.type === 'ai_infer') {
+    // Primary: judge regime on the LGAI push series; fallback: OHLCV model when no push data
+    if (t.payload.pushes) return inferPush(t.payload.pushes);
     return inferScore(t.payload.candles || t.payload.closes || []);
   }
   if (t.type === 'signal_verify') {
@@ -242,10 +366,17 @@ async function execTask(t) {
     const verdict = (t.payload.dir === 'LONG') === up ? 'WIN' : 'LOSS';
     return { price1, verdict };
   }
+  // Market context tasks (v0.8.0): TVL / funding / liquidations feed prediction confidence
+  if (t.type === 'chain_tvl') return await getChainTvl();
+  if (t.type === 'funding_rate') return await getFundingRate(t.symbol);
+  if (t.type === 'liquidation') return await getLiquidations(t.symbol, t.payload.windowMin || 60);
   throw new Error('unknown task type ' + t.type);
 }
 
-const TYPE_LABEL = { market_data: 'Market Data', ai_infer: 'AI Inference', signal_verify: 'Signal Verify' };
+const TYPE_LABEL = {
+  market_data: 'Market Data', ai_infer: 'AI Inference', signal_verify: 'Signal Verify',
+  chain_tvl: 'Chain TVL', funding_rate: 'Funding Rate', liquidation: 'Liquidations',
+};
 let done = 0, points = 0;
 
 async function pollOnce() {
@@ -257,7 +388,12 @@ async function pollOnce() {
       await api('/api/result', { method: 'POST', body: { taskId: t.id, data } });
       done++;
       const detail = t.type === 'market_data' ? `close=${data.close} vol=${data.vol} (${data.source})`
-        : t.type === 'ai_infer' ? `score=${data.score} [${data.regime}] 🚜${data.features.bulldozer} 🧲${data.features.accum} 📉${data.features.distrib}`
+        : t.type === 'ai_infer' ? (data.features && data.features.src === 'lgai_push'
+          ? `score=${data.score} [${data.regime}] push up=${Math.round(data.features.upRatio * 100)}% anchor=${data.features.anchorIntact ? 'ok' : 'broken'}`
+          : `score=${data.score} [${data.regime}] (ohlcv fallback)`)
+        : t.type === 'chain_tvl' ? `TVL $${data.totalB}B (${data.source})`
+        : t.type === 'funding_rate' ? `rate=${(data.rate * 100).toFixed(4)}%/8h (${data.source})`
+        : t.type === 'liquidation' ? `long $${Math.round(data.longUsd / 1e3)}k / short $${Math.round(data.shortUsd / 1e3)}k, ${data.count} orders (${data.source})`
           : `verdict=${data.verdict} @ ${data.price1}`;
       log(green('✓'), label, dim(detail));
     } catch (e) {
