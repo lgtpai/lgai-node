@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.10.0';
+const VERSION = '0.12.0';
 const PORT = +(process.env.PORT || 18402);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const TICK_MS = +(process.env.TICK_MS || 45_000);       // task generation interval
@@ -43,6 +43,7 @@ let S = {
   lgai: {},         // symbol -> bulldozer trend derived from proprietary LGAI push data (optional)
   srcStats: {},     // prediction-basis source -> {wins, losses} (trust ledger per source)
   context: { tvl: null, tvlHist: [], funding: {}, liq: {}, etf: {} }, // market context from node tasks (TVL / funding / liquidations / ETF flows)
+  model: { gen: 1, w: {}, roll: [], resolved: 0, floor: 0.30, history: [] }, // self-evolving prediction model (online feature-trust learning)
   stats: { tasksCompleted: 0, pointsIssued: 0, wins: 0, losses: 0, marketVolume: 0, humanWins: 0, humanLosses: 0, disputesUpheld: 0, disputesRejected: 0 },
 };
 function load() {
@@ -51,6 +52,8 @@ function load() {
   // migrate states saved by pre-0.8.0 coordinators
   S.context ||= { tvl: null, tvlHist: [], funding: {}, liq: {}, etf: {} };
   S.context.tvlHist ||= []; S.context.funding ||= {}; S.context.liq ||= {}; S.context.etf ||= {};
+  S.model ||= { gen: 1, w: {}, roll: [], resolved: 0, floor: 0.30, history: [] };
+  S.model.w ||= {}; S.model.roll ||= []; S.model.history ||= []; S.model.floor ||= 0.30; S.model.gen ||= 1;
 }
 let saveTimer = null;
 function save() {
@@ -252,21 +255,22 @@ function refreshLgaiAll() {
       topShort: fr.filter(t => t.dir === 'SHORT').sort((a, b) => a.upRatio - b.upRatio || b.pushes - a.pushes).slice(0, 10),
       updated: now(),
     };
-    // Trading universe: for now restricted to trending MAJORS (leading projects, aligned with
-    // lgai_regime.MAJORS); strongest trends first, capped by MAX_DYN_SYMBOLS.
-    dynSyms = trending
-      .filter(t => MAJORS.includes(t.token.toUpperCase()))
-      .map(t => t.token.toUpperCase() + 'USDT')
-      .filter(sym => !SYMBOLS.includes(sym))
-      .slice(0, DYN_MAX);
+    // Trading universe: trending projects that are either whitelisted MAJORS or
+    // auto-detected sector leaders (CoinGecko category rank × push frequency).
+    lastTrending = trending;
+    rebuildUniverse();
+    if (LEADER_AUTO) refreshLeaders(trending.map(t => t.token.toUpperCase()))
+      .then(rebuildUniverse)
+      .catch(e => log('[leader] refresh failed: ' + e.message));
     for (const t of trending) {
       const sym = t.token.toUpperCase() + 'USDT';
       S.lgai[sym] = { symbol: sym, dir: t.dir, upRatio: t.upRatio, pushes: t.pushes, lastPush: t.lastPush, lastPrice: t.lastPrice };
     }
-    log(`[lgai] full scan: ${lgaiAll.total} projects (${lgaiAll.fresh} fresh) · LONG ${lgaiAll.long} / SHORT ${lgaiAll.short} / range ${lgaiAll.mixed} · universe +${dynSyms.length} dynamic`);
+    log(`[lgai] full scan: ${lgaiAll.total} projects (${lgaiAll.fresh} fresh) · LONG ${lgaiAll.long} / SHORT ${lgaiAll.short} / range ${lgaiAll.mixed} · universe +${dynSyms.length} dynamic (${leaders.length} auto-leaders)`);
   } catch (e) { log('[lgai] full scan failed: ' + e.message); }
 }
-// Leading projects whitelist (single source of truth mirrors lgai_regime.MAJORS)
+// Leading projects whitelist — fallback / manual override (auto leader detection below
+// extends it; offline or CG-unreachable deployments keep working from the whitelist alone)
 const MAJORS = (process.env.LGAI_MAJORS || 'BTC,ETH,BNB,XRP,SOL,UNI,ADA,DOGE,LINK,AVAX,ARB,SUI,APT,OP')
   .split(',').map(s => s.trim().toUpperCase());
 const DYN_MAX = +(process.env.MAX_DYN_SYMBOLS || 20);
@@ -274,6 +278,119 @@ const MAX_OPEN_PRED = +(process.env.MAX_OPEN_PRED || 30);
 let dynSyms = [];        // dynamic trading universe from the push scan
 const badSym = {};       // symbols with repeated failed market_data (not exchange-listed) get circuit-broken
 const universe = () => [...SYMBOLS, ...dynSyms];
+let lastTrending = [];   // latest trending list from the full scan (rebuildUniverse input)
+function rebuildUniverse() {
+  const ls = new Set(leaders.map(l => l.token));
+  dynSyms = lastTrending
+    .filter(t => MAJORS.includes(t.token.toUpperCase()) || ls.has(t.token.toUpperCase()))
+    .map(t => t.token.toUpperCase() + 'USDT')
+    .filter(sym => !SYMBOLS.includes(sym))
+    .slice(0, DYN_MAX);
+}
+
+// ---- Auto leader detection: sector market-cap rank × robot push frequency ----
+// A trending pushed project counts as a 龙头 (sector leader) when it ranks top-N by
+// market cap inside its primary CoinGecko category (and is a top-300 asset overall).
+// Among several trending leaders of the SAME sector exactly ONE is selected:
+// highest 7-day push frequency first (the robot's conviction), better sector rank next.
+// All CoinGecko data is cached (meta 24h / sector tops 6h / category map 24h) and each
+// pass spends at most CG_CALL_MAX requests; failures fall back to the MAJORS whitelist.
+const LEADER_AUTO = process.env.LEADER_AUTO !== '0';
+const LEADER_TOP_N = +(process.env.LEADER_TOP_N || 3);   // top-N of its sector = leader
+const LEADER_MAX_RANK = +(process.env.LEADER_MAX_RANK || 50);  // overall mcap rank guard: top-50 assets only
+const LEADER_MIN_PUSH7D = 3;                              // robot must still be pushing it
+const CG_API = 'https://api.coingecko.com/api/v3';
+const CG_CALL_MAX = 8;
+const cgMeta = {};       // TOKEN -> {id, rank, cat, ts} (24h; id=null -> unknown to CG)
+const cgCatTop = {};     // category slug -> {ids, ts} (6h)
+let cgCatMap = { byName: {}, ts: 0 };  // category display name -> slug (24h)
+let leaders = [];        // [{token, cat, catRank, rank, pushes7d}] current selection
+
+async function cgJson(url) {
+  const res = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
+  if (res.status === 429) { cgCoolUntil = now() + 10 * 60_000; throw new Error('cg 429 rate-limited (cooling 10min)'); }
+  if (!res.ok) throw new Error('cg http ' + res.status);
+  await new Promise(r => setTimeout(r, 2200));   // gentle pacing: free-tier quota is shared machine-wide
+  return res.json();
+}
+let cgCoolUntil = 0;   // after a 429, skip leader refresh passes until this ts
+function pushes7d(token) {
+  if (!lgaiDb) return 0;
+  try {
+    const cutoff = new Date(now() - 7 * 86400_000).toISOString().slice(0, 19).replace('T', ' ');
+    return lgaiDb.prepare('SELECT COUNT(*) c FROM newcoins WHERE token = ? AND time >= ?')
+      .get(token, cutoff)?.c || 0;
+  } catch { return 0; }
+}
+// mega-categories that say nothing about a project's actual sector
+const CAT_SKIP = /ecosystem|portfolio|launchpad|alleged|proof of|layer 1|layer-1|layer 2|layer-2|smart contract|top \d|made in|world liberty|coinbase|binance|ftx holdings|multicoin|a16z|dwf|grayscale|index|gmci|crypto-backed|assets\b/i;
+
+async function refreshLeaders(cands) {
+  if (now() < cgCoolUntil) return;   // rate-limit cooldown: keep whatever we have
+  let calls = 0;
+  // 0) category display-name -> slug map (24h)
+  if (now() - cgCatMap.ts > 24 * 3600_000 && calls < CG_CALL_MAX) {
+    calls++;
+    const list = await cgJson(`${CG_API}/coins/categories/list`);
+    cgCatMap = { byName: Object.fromEntries(list.map(c => [String(c.name).toLowerCase(), c.category_id])), ts: now() };
+  }
+  // 1) ids + overall mcap ranks, one batched call for tokens missing fresh meta
+  const unknown = cands.filter(t => !(cgMeta[t]?.ts > now() - 24 * 3600_000)).slice(0, 40);
+  if (unknown.length && calls < CG_CALL_MAX) {
+    calls++;
+    const rows = await cgJson(`${CG_API}/coins/markets?vs_currency=usd&symbols=${unknown.map(t => t.toLowerCase()).join(',')}&include_tokens=top&per_page=250`);
+    const bySym = {};
+    for (const r of rows) { const s = String(r.symbol).toUpperCase(); if (!(s in bySym)) bySym[s] = r; }
+    for (const t of unknown) {
+      const r = bySym[t];
+      cgMeta[t] = r ? { id: r.id, rank: r.market_cap_rank, cat: cgMeta[t]?.cat, ts: now() } : { id: null, ts: now() };
+    }
+  }
+  // 2) primary category per candidate (1 call each, budgeted; only mcap-guarded ids)
+  for (const t of cands) {
+    const m = cgMeta[t];
+    if (now() < cgCoolUntil || calls >= CG_CALL_MAX) break;
+    if (!m?.id || m.cat !== undefined) continue;
+    if (!(m.rank > 0 && m.rank <= LEADER_MAX_RANK)) { m.cat = null; continue; }
+    calls++;
+    try {
+      const d = await cgJson(`${CG_API}/coins/${m.id}?localization=false&tickers=false&market_data=false&community_data=false&developer_data=false&sparkline=false`);
+      const cats = (d.categories || []).filter(c => c && !CAT_SKIP.test(c));
+      const slug = cats.map(c => cgCatMap.byName[String(c).toLowerCase()]).find(Boolean);
+      m.cat = slug || null;
+    } catch { /* stays undefined -> retried next pass */ }
+  }
+  // 3) sector top-N by market cap (6h cache per category)
+  for (const t of cands) {
+    const m = cgMeta[t];
+    if (now() < cgCoolUntil || calls >= CG_CALL_MAX) break;
+    if (!m?.id || !m.cat) continue;
+    if (cgCatTop[m.cat]?.ts > now() - 6 * 3600_000) continue;
+    calls++;
+    try {
+      const rows = await cgJson(`${CG_API}/coins/markets?vs_currency=usd&category=${encodeURIComponent(m.cat)}&order=market_cap_desc&per_page=${LEADER_TOP_N}&page=1`);
+      cgCatTop[m.cat] = { ids: rows.map(r => r.id), ts: now() };
+    } catch { }
+  }
+  // 4) leadership + pick exactly one per sector (push frequency, then sector rank)
+  const bySector = new Map();
+  for (const t of cands) {
+    const m = cgMeta[t];
+    const top = m?.cat ? cgCatTop[m.cat]?.ids || [] : [];
+    const idx = m?.id ? top.indexOf(m.id) : -1;
+    if (idx < 0) continue;
+    const cur = { token: t, cat: m.cat, catRank: idx + 1, rank: m.rank || null, pushes7d: pushes7d(t) };
+    if (cur.pushes7d < LEADER_MIN_PUSH7D) continue;
+    const prev = bySector.get(m.cat);
+    if (!prev || cur.pushes7d > prev.pushes7d
+        || (cur.pushes7d === prev.pushes7d && cur.catRank < prev.catRank))
+      bySector.set(m.cat, cur);
+  }
+  const next = [...bySector.values()].sort((a, b) => b.pushes7d - a.pushes7d);
+  const changed = JSON.stringify(next.map(l => l.token)) !== JSON.stringify(leaders.map(l => l.token));
+  leaders = next;
+  if (changed) log(`[leader] auto-selected ${leaders.length}: ${leaders.map(l => `${l.token}(${l.cat}#${l.catRank}·${l.pushes7d}p/7d)`).join(' ') || '—'}`);
+}
 
 // ---- Market context (v0.8.0): project heat, chain TVL, liquidations, funding ----
 // Coordinator issues real-world data tasks to nodes (hottest projects first); the
@@ -337,8 +454,73 @@ function ctxAdjust(symbol, dir) {
   }
   return { adj: Math.max(-0.2, Math.min(0.12, adj)), notes };
 }
-// Confidence below this after context adjustment -> the prediction is vetoed outright
+// Confidence below the adaptive floor -> the prediction is vetoed outright (initial value;
+// the floor self-adjusts with the rolling win rate, see learnFromOutcome)
 const CTX_VETO_CONF = 0.30;
+
+// ---- Self-evolving prediction model (v0.11.0) ----
+// Every resolved prediction is a labeled sample. The model learns the verified win rate
+// of each feature (source × timeframe × signal type × symbol class × context factor ×
+// human stance) and blends that evidence into confidence — the more the network verifies,
+// the more the learned trust takes over from the hand-tuned prior. An adaptive publish
+// floor trades quantity for quality automatically, ratcheting the win rate up over time.
+function featsOf({ src, tf, sig, symbol, ctxNotes, humanAgree, disputed }) {
+  const f = [`src:${src}`, `tf:${tf || 'spot'}`,
+    `sym:${MAJORS.includes(symbol.replace(/USDT$/, '')) ? 'major' : 'alt'}`];
+  if (sig) f.push(`sig:${sig}`);
+  for (const n of ctxNotes || []) {
+    const kind = /crowded shorts/.test(n) ? 'funding-short-crowd' : /crowded longs/.test(n) ? 'funding-long-crowd'
+      : /long-liq/.test(n) ? 'liq-long-cascade' : /squeeze/.test(n) ? 'liq-short-squeeze'
+      : /TVL \+/.test(n) ? 'tvl-up' : /TVL/.test(n) ? 'tvl-down'
+      : /ETF \+/.test(n) ? 'etf-inflow' : /ETF/.test(n) ? 'etf-outflow' : null;
+    if (kind) f.push(`ctx:${kind}`);
+  }
+  if (humanAgree) f.push('human:agree');
+  if (disputed) f.push('human:disputed');
+  return f;
+}
+function modelConfidence(feats) {
+  let num = 0, den = 0, evid = 0;
+  for (const f of feats || []) {
+    const s = S.model.w[f];
+    if (!s) continue;
+    const n = s.wins + s.losses;
+    const trust = (s.wins + 1) / (n + 2);       // Laplace-smoothed verified win rate
+    const w = Math.min(n, 50);                  // evidence-weighted, capped per feature
+    num += trust * w; den += w; evid += n;
+  }
+  return { conf: den ? num / den : 0.5, evid };
+}
+// Blend: hand-tuned prior fades out as verified evidence accumulates (model voice caps at 50%)
+function finalConfidence(base, feats) {
+  const { conf, evid } = modelConfidence(feats);
+  const lam = Math.min(evid, 40) / 80;
+  return +Math.max(0.05, Math.min(0.95, base * (1 - lam) + conf * lam)).toFixed(2);
+}
+function learnFromOutcome(p, win) {
+  const M = S.model;
+  for (const f of p.feats || []) {
+    const s = (M.w[f] ||= { wins: 0, losses: 0 });
+    s[win ? 'wins' : 'losses'] += 1;
+  }
+  M.resolved += 1;
+  M.roll.push(win ? 1 : 0);
+  if (M.roll.length > 50) M.roll.splice(0, M.roll.length - 50);
+  // Every 20 verified outcomes = one generation: adapt the publish floor to the rolling
+  // win rate (below target -> stricter, i.e. fewer but better calls; well above -> relax a bit)
+  if (M.resolved % 20 === 0 && M.roll.length >= 20) {
+    const r20 = M.roll.slice(-20);
+    const wr = r20.reduce((a, b) => a + b, 0) / r20.length;
+    if (wr < 0.55) M.floor = Math.min(0.55, +(M.floor + 0.02).toFixed(2));
+    else if (wr > 0.65) M.floor = Math.max(0.25, +(M.floor - 0.01).toFixed(2));
+    M.gen += 1;
+    M.history.push({ gen: M.gen, ts: now(), winRate: +(wr * 100).toFixed(1), floor: M.floor, features: Object.keys(M.w).length });
+    if (M.history.length > 40) M.history.splice(0, M.history.length - 40);
+    archivePut('model_evolution', { gen: M.gen, winRate20: +(wr * 100).toFixed(1), floor: M.floor, features: Object.keys(M.w).length });
+    log(`[model] evolved to gen ${M.gen} · rolling20 win ${Math.round(wr * 100)}% · publish floor ${M.floor}`);
+  }
+}
+const vetoFloor = () => Math.max(CTX_VETO_CONF, S.model.floor || CTX_VETO_CONF);
 
 // Issue market-context tasks to nodes — hottest projects first
 function scheduleContextTasks(red) {
@@ -430,18 +612,20 @@ function maybeCreatePrediction(symbol) {
     log(`[pred] ${symbol} ${dir} (SMA) vetoed by human consensus ${hs.dir} (${hs.votes} votes)`);
     return;
   }
-  // Market context adjustment (funding crowding / liquidation cascade / TVL flow):
-  // counter-context calls lose confidence and are vetoed below the floor -> higher win rate
+  // Market context adjustment + learned feature trust: counter-context or historically
+  // weak setups lose confidence and are vetoed below the adaptive floor -> higher win rate
   const ctx = ctxAdjust(symbol, dir);
-  const confidence = +Math.max(0.05, Math.min(0.95,
-    predConfidence(src, { aiConfirm, humanAgree: hs.dir === dir, disputed }) + ctx.adj)).toFixed(2);
-  if (confidence < CTX_VETO_CONF) {
-    log(`[pred] ${symbol} ${dir} vetoed by market context (${ctx.notes.join('; ') || 'low confidence'})`);
+  const feats = featsOf({ src, symbol, ctxNotes: ctx.notes, humanAgree: hs.dir === dir, disputed });
+  const base = Math.max(0.05, Math.min(0.95,
+    predConfidence(src, { aiConfirm, humanAgree: hs.dir === dir, disputed }) + ctx.adj));
+  const confidence = finalConfidence(base, feats);
+  if (confidence < vetoFloor()) {
+    log(`[pred] ${symbol} ${dir} vetoed (conf ${confidence} < floor ${vetoFloor()}; ${ctx.notes.join('; ') || 'learned low trust'})`);
     return;
   }
   if (ctx.notes.length) basis += ` | ctx: ${ctx.notes.join(', ')}`;
   S.predictions.unshift({
-    id: uid(), symbol, dir, basis, src, confidence, disputed: disputed || undefined,
+    id: uid(), symbol, dir, basis, src, confidence, feats, disputed: disputed || undefined,
     price0: last, createdAt: now(), horizonMin: HORIZON_MIN, status: 'open',
   });
   S.predictions = S.predictions.slice(0, 120);
@@ -457,6 +641,9 @@ function resolvePrediction(p, win, price1, verifiers) {
   // Trust loop: the source's verified track record is the backbone of prediction trustworthiness
   const ss = (S.srcStats[p.src || 'sma'] ||= { wins: 0, losses: 0 });
   ss[win ? 'wins' : 'losses'] += 1;
+  // Self-evolving model: every verified outcome updates the learned trust of the
+  // prediction's features and (every 20 outcomes) the adaptive publish floor
+  learnFromOutcome(p, win);
   // Human dispute scoreboard: upheld = humans objected and the call indeed lost
   if (p.disputed) S.stats[win ? 'disputesRejected' : 'disputesUpheld'] = (S.stats[win ? 'disputesRejected' : 'disputesUpheld'] || 0) + 1;
   // PoI human verification: voters who called the outcome correctly earn a verified-insight bonus,
@@ -633,15 +820,16 @@ function finalize(t) {
         const hs = weightedSentiment(t.symbol);
         const disputed = !!hs.dir && hs.dir !== majDir;
         const ctx = ctxAdjust(t.symbol, majDir);
-        const conf = +Math.max(0.05, Math.min(0.95,
-          predConfidence(src, { humanAgree: hs.dir === majDir, disputed }) + ctx.adj)).toFixed(2);
-        if (conf >= CTX_VETO_CONF) {
+        const feats = featsOf({ src, tf, sig: topSig ? topSig[0] : 'ai', symbol: t.symbol, ctxNotes: ctx.notes, humanAgree: hs.dir === majDir, disputed });
+        const conf = finalConfidence(Math.max(0.05, Math.min(0.95,
+          predConfidence(src, { humanAgree: hs.dir === majDir, disputed }) + ctx.adj)), feats);
+        if (conf >= vetoFloor()) {
           const basis = `${tf} ${topSig ? SIG_LABEL[topSig[0]] || topSig[0] : 'AI forecast'} (${entries.length}-node)`
             + (hs.dir === majDir ? ' + human consensus' : '')
             + (ctx.notes.length ? ` | ctx: ${ctx.notes.join(', ')}` : '');
           archivePut('tf_forecast', { symbol: t.symbol, tf, dir: majDir, signal: topSig ? topSig[0] : 'ai', contributors: entries.length });
           S.predictions.unshift({
-            id: uid(), symbol: t.symbol, dir: majDir, src, tf, confidence: conf,
+            id: uid(), symbol: t.symbol, dir: majDir, src, tf, feats, confidence: conf,
             disputed: disputed || undefined, basis, price0: px, createdAt: now(),
             horizonMin: t.payload.horizonMin || HORIZON_MIN, status: 'open',
           });
@@ -688,14 +876,15 @@ function tick() {
       const hs = weightedSentiment(sym);
       const disputed = !!hs.dir && hs.dir !== g.dir;
       const ctx = ctxAdjust(sym, g.dir);
-      const conf = +Math.max(0.05, Math.min(0.95,
-        predConfidence('lgai_push', { humanAgree: hs.dir === g.dir, disputed }) + ctx.adj)).toFixed(2);
-      if (conf < CTX_VETO_CONF) {
-        log(`[pred] ${sym} ${g.dir} (push-only) vetoed by market context (${ctx.notes.join('; ')})`);
+      const feats = featsOf({ src: 'lgai_push', symbol: sym, ctxNotes: ctx.notes, humanAgree: hs.dir === g.dir, disputed });
+      const conf = finalConfidence(Math.max(0.05, Math.min(0.95,
+        predConfidence('lgai_push', { humanAgree: hs.dir === g.dir, disputed }) + ctx.adj)), feats);
+      if (conf < vetoFloor()) {
+        log(`[pred] ${sym} ${g.dir} (push-only) vetoed (conf ${conf} < floor ${vetoFloor()})`);
         continue;
       }
       S.predictions.unshift({
-        id: uid(), symbol: sym, dir: g.dir, srcPush: true, src: 'lgai_push',
+        id: uid(), symbol: sym, dir: g.dir, srcPush: true, src: 'lgai_push', feats,
         confidence: conf,
         disputed: disputed || undefined,
         basis: `LGAI push bulldozer ${Math.round(g.upRatio * 100)}%↑ (${g.pushes} pushes)`
@@ -876,6 +1065,21 @@ const server = http.createServer(async (req, res) => {
         humanAccuracy: (S.stats.humanWins + S.stats.humanLosses)
           ? +(S.stats.humanWins / (S.stats.humanWins + S.stats.humanLosses) * 100).toFixed(1) : null,
         srcTrust: srcTrustAll(),
+        model: (() => {   // self-evolving model snapshot for the dashboard
+          const M = S.model;
+          const feats = Object.entries(M.w).map(([k, s]) => {
+            const n = s.wins + s.losses;
+            return { k, n, trust: +((s.wins + 1) / (n + 2)).toFixed(3) };
+          }).filter(f => f.n >= 2).sort((a, b) => b.trust - a.trust || b.n - a.n);
+          const wr = a => a.length ? +(a.reduce((x, y) => x + y, 0) / a.length * 100).toFixed(1) : null;
+          return {
+            gen: M.gen, floor: M.floor, resolved: M.resolved || 0,
+            win20: wr((M.roll || []).slice(-20)), win50: wr(M.roll || []),
+            featCount: Object.keys(M.w).length,
+            best: feats.slice(0, 6), worst: feats.slice(-6).reverse(),
+            history: (M.history || []).slice(-12),
+          };
+        })(),
         tfAcc: (() => {   // per-timeframe verified accuracy of tf_forecast predictions
           const m = {};
           for (const p of S.predictions) {
@@ -900,7 +1104,7 @@ const server = http.createServer(async (req, res) => {
           etf: Object.values(S.context.etf).filter(e => now() - e.ts < 26 * 3600_000),
           heat: heatBoard().slice(0, 10),
         },
-        universe: { core: SYMBOLS, dynamic: dynSyms, total: universe().length },
+        universe: { core: SYMBOLS, dynamic: dynSyms, total: universe().length, leaders },
         chain: S.chain, archive: S.archive.slice(0, 10),
         market: { listings: listings(), sales: S.market.sales.slice(0, 8), volume: S.stats.marketVolume || 0 },
         symbols: Object.fromEntries(SYMBOLS.map(s => [s, (S.marketHistory[s] || []).slice(-1)[0] || null])),

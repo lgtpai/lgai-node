@@ -30,7 +30,7 @@ const lgaiDbPath = path.join(tmp, 'lgai.db');
 }
 
 const coord = spawn(process.execPath, [path.join(root, 'coordinator/server.js')], {
-  env: { ...process.env, PORT: String(PORT), DATA_DIR: path.join(tmp, 'coord'), TICK_MS: '1200', HORIZON_MIN: '0.02', LEASE_MS: '2500', LGAI_DB: lgaiDbPath },
+  env: { ...process.env, PORT: String(PORT), DATA_DIR: path.join(tmp, 'coord'), TICK_MS: '1200', HORIZON_MIN: '0.02', LEASE_MS: '2500', LEADER_AUTO: '0', LGAI_DB: lgaiDbPath },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 coord.stderr.on('data', d => process.stderr.write('[coord] ' + d));

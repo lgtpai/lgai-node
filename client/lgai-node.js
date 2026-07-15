@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-const VERSION = '0.10.0';
+const VERSION = '0.12.0';
 
 // ---------------- args ----------------
 const args = process.argv.slice(2);

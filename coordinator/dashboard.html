@@ -167,6 +167,11 @@ footer{max-width:1240px;margin:22px auto 0;padding:0 24px;font-size:11.5px;color
         </table></div>
       </div>
       <div class="panel" style="margin-top:14px">
+        <h2 data-k="pModel">MODEL EVOLUTION · SELF-IMPROVING WIN RATE</h2>
+        <div id="modelSum" style="padding:10px 20px;font-size:12px;font-weight:700;border-bottom:1px solid var(--line);color:var(--muted)"></div>
+        <div id="modelFeat" style="padding:8px 20px;font-size:11.5px;color:var(--muted)"></div>
+      </div>
+      <div class="panel" style="margin-top:14px">
         <h2 data-k="pFeedback">HUMAN FEEDBACK · PoI DUAL-CHANNEL</h2>
         <div id="senti" style="padding:8px 20px;border-bottom:1px solid var(--line)"></div>
         <div class="feed" id="fbfeed" style="max-height:150px"></div>
@@ -204,7 +209,7 @@ en:{
   thLgai:['Pair','Bulldozer Trend','Push Up-Ratio','Pushes','Last Push Price','Last Push Time'],
   thLgaiTop:['#','Project','Trend','Up-Ratio','Pushes','Last Push'],
   breadth:A=>`Full-market scan: ${A.total} projects · ${A.fresh} active (72h) · 🚜 LONG ${A.long} · 📉 SHORT ${A.short} · range ${A.mixed}`,
-  universe:u=>`Trading universe: ${u.total} symbols (${u.core.length} core + ${u.dynamic.length} trending pushed projects)`,
+  universe:u=>`Trading universe: ${u.total} symbols (${u.core.length} core + ${u.dynamic.length} trending pushed projects)`+((u.leaders&&u.leaders.length)?` · auto-leaders: ${u.leaders.map(l=>`${l.token}[${l.cat}#${l.catRank}·${l.pushes7d}p/7d]`).join(' ')}`:''),
   trendNone:'RANGE / MIXED',
   eLgai:'Push database not connected — start coordinator with LGAI_DB=/path/to/lgai.db (Node ≥ 22)',
   pCtx:'MARKET CONTEXT · PROJECT HEAT / CHAIN TVL / LIQUIDATIONS / FUNDING (node tasks)',
@@ -214,6 +219,10 @@ en:{
   eCtx:'No context data yet — nodes are working on TVL / funding / liquidation tasks',
   crowd:{shorts:'crowded shorts',longs:'crowded longs',ok:'neutral'},
   tilt:{long:'long flush',short:'short squeeze',ok:'balanced'},
+  pModel:'MODEL EVOLUTION · SELF-IMPROVING WIN RATE',
+  mSum:m=>`Generation <b style="color:#fbbf24">${m.gen}</b> · verified samples ${m.resolved} · rolling win rate: last 20 <b style="color:${m.win20>=55?'#34d399':m.win20!=null&&m.win20<=45?'#f87171':'var(--muted)'}">${m.win20!=null?m.win20+'%':'—'}</b> / last 50 <b>${m.win50!=null?m.win50+'%':'—'}</b> · adaptive publish floor <b style="color:#a78bfa">${Math.round(m.floor*100)}%</b> · ${m.featCount} learned features`,
+  mBest:'Strongest setups:',mWorst:'Weakest setups:',mHist:'Evolution:',
+  eModel:'Learning starts after the first verified predictions — every resolved call teaches the model',
   thNodes:['Name','Platform','Status','Tier','Load','Points','Tasks','Strikes','Last Seen'],
   thSigs:['Pair','Score','Regime','Push Up-Ratio','Anchor','Push Momentum','Basis','Node','Time','Rate'],
   thPreds:['Pair','Direction','Basis','Confidence','Entry','Exit','Status','Time','Your Call'],
@@ -253,7 +262,7 @@ zh:{
   thLgai:['交易对','推土机趋势','推送上涨占比','推送数','最新推送价','最新推送时间'],
   thLgaiTop:['#','项目','趋势','上涨占比','推送数','最新推送'],
   breadth:A=>`全库扫描：${A.total} 项目 · 活跃 ${A.fresh}（72h）· 🚜多头 ${A.long} · 📉出货 ${A.short} · 震荡 ${A.mixed}`,
-  universe:u=>`交易范围：${u.total} 个项目（${u.core.length} 核心 + ${u.dynamic.length} 全库趋势项目）`,
+  universe:u=>`交易范围：${u.total} 个项目（${u.core.length} 核心 + ${u.dynamic.length} 全库趋势项目）`+((u.leaders&&u.leaders.length)?` · 自动龙头：${u.leaders.map(l=>`${l.token}[${l.cat}#${l.catRank}·7天${l.pushes7d}推]`).join(' ')}`:''),
   trendNone:'震荡 / 分歧',
   eLgai:'推送数据库未连接 —— 启动协调端时设置 LGAI_DB=/path/to/lgai.db（需 Node ≥ 22）',
   pCtx:'市场情境 · 项目热度 / 公链 TVL / 全网爆仓 / 资金费率（节点任务）',
@@ -263,6 +272,10 @@ zh:{
   eCtx:'暂无情境数据 —— 节点正在执行 TVL / 费率 / 爆仓任务',
   crowd:{shorts:'空头拥挤',longs:'多头拥挤',ok:'中性'},
   tilt:{long:'多头被爆',short:'轧空',ok:'均衡'},
+  pModel:'模型进化 · 胜率自提升',
+  mSum:m=>`第 <b style="color:#fbbf24">${m.gen}</b> 代 · 已验证样本 ${m.resolved} · 滚动胜率：近20 <b style="color:${m.win20>=55?'#34d399':m.win20!=null&&m.win20<=45?'#f87171':'var(--muted)'}">${m.win20!=null?m.win20+'%':'—'}</b> / 近50 <b>${m.win50!=null?m.win50+'%':'—'}</b> · 自适应发布门槛 <b style="color:#a78bfa">${Math.round(m.floor*100)}%</b> · 已学习特征 ${m.featCount} 个`,
+  mBest:'最强形态：',mWorst:'最弱形态：',mHist:'进化轨迹：',
+  eModel:'首批预测验证后开始学习 —— 每一次裁定都在训练模型',
   thNodes:['名称','平台','状态','等级','负载','积分','任务','违规','最后心跳'],
   thSigs:['交易对','综合评分','形态','推送上涨占比','结构锚','推送动量','依据','节点','时间','评价'],
   thPreds:['交易对','方向','依据','置信度','入场价','出场价','状态','时间','你的判断'],
@@ -487,6 +500,17 @@ async function refresh(){
         <td class="mono">${q?`$${Math.round(q.longUsd/1e3)}k / $${Math.round(q.shortUsd/1e3)}k`:'—'}</td>
         <td>${tilt}</td></tr>`;
       }).join(''):empty(8,t.eCtx);
+    }
+    // self-evolving model panel
+    const M=d.model;
+    if(M){
+      $('modelSum').innerHTML=(M.resolved>0)?t.mSum(M):t.eModel;
+      const chip=f=>`<span class="mono" style="margin-right:10px">${esc(f.k)} <b style="color:${f.trust>=0.55?'#34d399':f.trust<=0.45?'#f87171':'var(--muted)'}">${Math.round(f.trust*100)}%</b><span style="color:var(--dim)">(${f.n})</span></span>`;
+      let html='';
+      if(M.best&&M.best.length)html+=`<div style="padding:3px 0"><span style="color:var(--dim)">${t.mBest}</span> ${M.best.map(chip).join('')}</div>`;
+      if(M.worst&&M.worst.length)html+=`<div style="padding:3px 0"><span style="color:var(--dim)">${t.mWorst}</span> ${M.worst.map(chip).join('')}</div>`;
+      if(M.history&&M.history.length)html+=`<div style="padding:3px 0"><span style="color:var(--dim)">${t.mHist}</span> <span class="mono">${M.history.map(h=>`G${h.gen}:${h.winRate}%`).join(' → ')}</span></div>`;
+      $('modelFeat').innerHTML=html;
     }
     $('oracle').innerHTML=(d.oracle&&d.oracle.length)?d.oracle.map(f=>`<tr>
       <td>${esc(f.symbol)}</td>
